@@ -68,9 +68,17 @@ def resolve_chunks(corpus, retrieval):
 
 
 def investigate(root, backend_name="mock", repeats=None, exhaustive=False, model=None,
-                echo=print):
+                echo=print, on_event=None, on_record=None):
+    """Run the investigation. ``on_event(kind, data)`` reports structured progress.
+
+    The CLI ignores ``on_event`` and reads the echoed lines; the web UI ignores the
+    lines and animates the events. Both are watching the same run.
+    """
+    event = on_event if on_event else lambda kind, data: None
+
     summary = verify_episode.verify(root)  # raises Fail on RED; nothing else runs
     echo(f"  pre-flight: episode GREEN - {summary['count']} records - proceeding")
+    event("preflight", {"count": summary["count"], "episode": summary["episode"]})
 
     bodies = summary["bodies"]
     genesis = find(bodies, R.GENESIS)[0]
@@ -99,8 +107,12 @@ def investigate(root, backend_name="mock", repeats=None, exhaustive=False, model
         internal_email_domains=genesis["payload"]["policy"]["internal_email_domains"],
     )
 
+    event("chunks", {"chunks": [dict(c.citation(), rank=i) for i, c in enumerate(chunks)],
+                     "task": task, "violation_seq": violation["seq"],
+                     "tool": violation["payload"]["tool"], "rule": violation["payload"]["rule"]})
+
     seal = find(bodies, R.SEAL)[-1]
-    rec = Recorder.reopen(root, actor=INVESTIGATOR_VERSION)
+    rec = Recorder.reopen(root, actor=INVESTIGATOR_VERSION, on_append=on_record)
     rec.reopen_after_seal()
     rec.append(
         R.INVESTIGATION_OPEN,
@@ -140,6 +152,11 @@ def investigate(root, backend_name="mock", repeats=None, exhaustive=False, model
     def show_round(n, left, right, left_hit, right_hit):
         echo(f"  bisect {n}: retain {len(left)} -> {_yn(left_hit)} | "
              f"retain {len(right)} -> {_yn(right_hit)}")
+        event("bisect_round", {
+            "round": n,
+            "left": [f"{c.doc_id}#{c.chunk_id}" for c in left], "left_violation": left_hit,
+            "right": [f"{c.doc_id}#{c.chunk_id}" for c in right], "right_violation": right_hit,
+        })
 
     replayer.phase = "bisect"
     candidate, rounds, status = bisect(replayer, on_round=show_round)
@@ -176,6 +193,10 @@ def investigate(root, backend_name="mock", repeats=None, exhaustive=False, model
         echo(f"  leave-one-in   {candidate.doc_id} chunk {candidate.chunk_id} alone   -> "
              f"{'violation' if loi_votes else 'no violation'}"
              f"      ({'sufficient' if sufficiency >= attribute.THRESHOLD_MILLI else 'not sufficient'})")
+        event("confirm", {"candidate": candidate.citation(),
+                          "key": f"{candidate.doc_id}#{candidate.chunk_id}",
+                          "necessity_milli": necessity, "sufficiency_milli": sufficiency,
+                          "loo_violation": bool(loo_votes), "loi_violation": bool(loi_votes)})
 
         others = [c for c in chunks if c is not candidate]
         if exhaustive:
@@ -216,6 +237,7 @@ def investigate(root, backend_name="mock", repeats=None, exhaustive=False, model
          f"{payload['sufficiency_milli']}/1000 - runner-up necessity "
          f"{payload['runner_up_necessity_milli']}/1000")
     echo(f"  finding signed -> record {finding['seq']:06d} - resealed ({rec.count} records)")
+    event("verdict", {"finding": payload, "finding_seq": finding["seq"], "count": rec.count})
     return payload, rec
 
 

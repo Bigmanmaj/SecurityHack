@@ -10,9 +10,10 @@ import os
 
 import pytest
 
-import adversary as adv
 import verify_episode
 from conftest import BLOB_TEXT, TEST_SEED0, blob_digest, build_episode
+from demo import adversary as adv
+from demo import attacks
 from fr import reasons
 from fr.hashes import sha3_hex
 from fr.recorder import RECORDS_DIRNAME
@@ -232,6 +233,72 @@ def test_every_reason_code_has_a_row():
     source = open(os.path.join(os.path.dirname(__file__), "test_tamper_matrix.py")).read()
     untested = [code for code in reasons.ALL if f"reasons.{code}" not in source]
     assert not untested, f"reason codes with no tamper-matrix row: {untested}"
+
+
+# --- the attack menu the web UI renders, proven one entry at a time --------
+
+def episode_target(root, foreign_root=None):
+    bodies = verify_episode.verify(root)["bodies"]
+    foreign = None
+    if foreign_root:
+        foreign = verify_episode.verify(foreign_root)["episode"]
+    return attacks.Target(root=root, episode=bodies[0]["episode"], count=len(bodies),
+                          bodies=bodies, foreign_root=foreign_root, foreign_episode=foreign)
+
+
+@pytest.mark.parametrize("attack", attacks.ATTACKS, ids=lambda a: a.key)
+def test_every_menu_attack_produces_the_reason_code_it_claims(attack, tmp_path):
+    """The web UI renders this registry as buttons. Each button's promise is a test.
+
+    If an attack's declared reason code drifts from what the verifier actually
+    returns, the demo would be lying to a judge. This is the test that stops that.
+    """
+    root = str(tmp_path / "episode")
+    foreign = str(tmp_path / "foreign")
+    rag_style_episode(root)
+    rag_style_episode(foreign)
+
+    target = episode_target(root, foreign_root=foreign)
+    seq, note = attacks.apply(attack.key, target)
+    assert note, "every attack must explain what it did"
+
+    verify_expecting(root, attack.reason)
+    assert isinstance(seq, int)
+
+
+def test_the_menu_covers_the_whole_taxonomy():
+    declared = {attack.reason for attack in attacks.ATTACKS}
+    missing = [code for code in reasons.ALL if code not in declared]
+    assert not missing, f"reason codes the attack menu cannot demonstrate: {missing}"
+
+
+def test_menu_attacks_that_need_a_live_key_say_so_instead_of_failing_quietly(tmp_path):
+    root = str(tmp_path / "closed")
+    rag_style_episode(root)
+    os.remove(os.path.join(root, ".recorder-state.json"))  # append-closed, like golden
+    target = episode_target(root)
+
+    for attack in attacks.ATTACKS:
+        if attack.requires != attacks.NEEDS_LIVE_KEY:
+            continue
+        with pytest.raises(attacks.AttackUnavailable, match="no live key"):
+            attacks.apply(attack.key, target)
+
+
+def test_splicing_from_itself_is_refused_rather_than_shown_as_a_no_op(tmp_path):
+    root = str(tmp_path / "solo")
+    rag_style_episode(root)
+    target = episode_target(root, foreign_root=root)
+    with pytest.raises(attacks.AttackUnavailable, match="nothing foreign"):
+        attacks.apply("splice_episode", target)
+
+
+def rag_style_episode(root):
+    """A real agent episode: the attacks target TOOL_CALL, RETRIEVAL, and blobs."""
+    from agent import rag
+
+    rag.run_episode(root, scenario="poisoned", backend_name="mock")
+    return root
 
 
 # --- helpers --------------------------------------------------------------

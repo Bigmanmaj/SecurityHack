@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flight Recorder</title>
+<!-- Zero external requests: no CDN, no fonts, no npm, and an inline favicon so the
+     browser does not even ask for one. This page works with the network cable
+     pulled out, which is the only wifi a conference reliably has. -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%230b0e13'/><path d='M8 2v12M4 5h8M4 11h8' stroke='%233fd07f' stroke-width='1.5' fill='none'/></svg>">
+<style>
+:root{
+  --bg:#0b0e13; --panel:#11151d; --panel2:#161b25; --line:#232a36;
+  --ink:#c9d4e3; --dim:#6b7688; --dimmer:#454e5e;
+  --green:#3fd07f; --red:#ff5f56; --amber:#f5b944; --blue:#5aa9e6;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"DejaVu Sans Mono",monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:var(--bg); color:var(--ink); font-family:var(--mono);
+  font-size:13px; line-height:1.45; overflow:hidden;
+}
+button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:0;cursor:pointer}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-thumb{background:#222936;border-radius:4px}
+
+#app{display:flex;flex-direction:column;height:100%}
+
+/* ---------- header ---------- */
+header{
+  display:flex;align-items:baseline;gap:18px;padding:10px 16px;
+  border-bottom:1px solid var(--line);background:var(--panel);flex:0 0 auto;
+}
+header h1{font-size:13px;letter-spacing:.18em;margin:0;font-weight:600}
+.anchor{color:var(--dim)}
+.anchor b{color:var(--blue);font-weight:500}
+.anchor .note{color:var(--dimmer)}
+.source{margin-left:auto;color:var(--dimmer)}
+.source.golden{color:var(--amber)}
+
+/* ---------- three columns ---------- */
+main{display:grid;grid-template-columns:360px 1fr 320px;flex:1 1 auto;min-height:0}
+section{min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+section:last-child{border-right:0}
+.head{
+  padding:7px 12px;border-bottom:1px solid var(--line);color:var(--dim);
+  letter-spacing:.14em;font-size:11px;display:flex;justify-content:space-between;flex:0 0 auto;
+}
+.body{overflow:auto;padding:8px 0;flex:1 1 auto}
+
+/* ---------- chain spine ---------- */
+.rec{
+  display:grid;grid-template-columns:14px 30px 1fr auto auto auto;gap:6px;align-items:center;
+  padding:2px 10px 2px 8px;cursor:pointer;position:relative;font-size:12.5px;
+}
+.rec:hover{background:#161c26}
+.rec .link{color:var(--dimmer);text-align:center;line-height:1}
+.rec .seq{color:var(--dimmer);text-align:right}
+.rec .type{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rec .hash{color:var(--dimmer);font-size:11px}
+.rec.new{animation:land .35s ease-out}
+@keyframes land{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
+.rec.violation .type{color:var(--amber)}
+.rec.seal .type{color:var(--blue)}
+.rec.finding .type{color:var(--green)}
+.rec.culprit{background:#1d1410}
+.rec.bad{background:#2a1113}
+.rec.bad .type,.rec.bad .seq{color:var(--red)}
+.rec.bad .link{color:var(--red)}
+.rec.edited{background:#2a2210}
+.rec.edited .type{color:var(--amber)}
+.rec.downstream{opacity:.32}
+.rec.selected{outline:1px solid var(--blue);outline-offset:-1px}
+.chip{
+  font-size:10px;color:var(--dimmer);border:1px solid #222936;border-radius:3px;
+  padding:0 3px;white-space:nowrap;
+}
+.chip.erased{color:#6d7f61;border-color:#26301f}
+.chip.live{color:var(--amber);border-color:#4a3d14;background:#1d1810}
+.legend{
+  padding:6px 12px;color:var(--dimmer);font-size:10.5px;border-top:1px solid var(--line);
+  display:flex;gap:10px;flex-wrap:wrap;
+}
+.ms{color:var(--dimmer);font-size:10px;min-width:34px;text-align:right}
+.hint{padding:8px 12px;color:var(--dimmer);font-size:11px}
+
+/* ---------- centre ---------- */
+.pane{padding:10px 14px}
+.label{color:var(--dim);font-size:11px;letter-spacing:.12em;margin:14px 0 5px}
+.label:first-child{margin-top:0}
+.task{color:var(--ink)}
+.chunk{
+  display:flex;gap:8px;align-items:baseline;padding:3px 8px;border-left:2px solid #222936;
+  margin:2px 0;transition:opacity .25s,background .25s,border-color .25s;
+}
+.chunk .id{color:var(--ink)}
+.chunk .sc{color:var(--dimmer);font-size:11px;margin-left:auto}
+.chunk.ablated{opacity:.25;border-left-color:#1a1f28}
+.chunk.retained{border-left-color:var(--blue)}
+.chunk.culprit{border-left-color:var(--red);background:#241315}
+.chunk.culprit .id{color:var(--red)}
+.skull{color:var(--red)}
+.stamp{font-size:11px;margin-left:6px}
+.stamp.yes{color:var(--amber)}
+.stamp.no{color:var(--dim)}
+.banner{
+  border:1px solid #3a2f14;background:#1d1810;padding:8px 10px;margin-top:6px;color:var(--amber);
+}
+.banner .rule{color:var(--dim)}
+.verdictbox{border:1px solid #1e3a2a;background:#101a15;padding:8px 10px;margin-top:6px}
+.verdictbox.multi{border-color:#3a2f14;background:#1d1810}
+.verdictbox h4{margin:0 0 4px;font-size:12px;color:var(--green);font-weight:600}
+.verdictbox.multi h4{color:var(--amber)}
+.kv{color:var(--dim)}
+.kv b{color:var(--ink);font-weight:500}
+.doc{
+  margin-top:8px;padding:8px 10px;background:#0d1117;border:1px solid var(--line);
+  max-height:190px;overflow:auto;white-space:pre-wrap;color:var(--dimmer);font-size:11.5px;
+}
+.doc mark{background:#4a1418;color:#ffb4ae;padding:1px 0}
+.rounds{margin-top:4px}
+.round{color:var(--dim);font-size:11.5px;padding:1px 0}
+.round b{color:var(--ink);font-weight:500}
+
+/* ---------- right column ---------- */
+.status{
+  margin:12px;border:1px solid var(--line);background:var(--panel2);
+  padding:16px 12px;text-align:center;
+}
+.status .big{font-size:26px;letter-spacing:.16em;font-weight:600;color:var(--dimmer)}
+.status.green{border-color:#1e4a33;background:#0e1a14}
+.status.green .big{color:var(--green)}
+.status.red{border-color:#4a1e1e;background:#1a0e0e}
+.status.red .big{color:var(--red)}
+.status.amber{border-color:#4a3d1e;background:#1a160e}
+.status.amber .big{color:var(--amber)}
+.status .sub{color:var(--dim);margin-top:6px;font-size:11.5px}
+.status .exit{color:var(--dimmer);font-size:11px;margin-top:4px}
+.facts{padding:0 14px;color:var(--dim);font-size:11.5px}
+.facts div{padding:1px 0}
+.controls{padding:12px 14px;display:flex;flex-direction:column;gap:6px}
+.btn{
+  border:1px solid var(--line);padding:6px 10px;text-align:left;background:var(--panel2);
+  display:flex;gap:8px;align-items:center;
+}
+.btn:hover:not(:disabled){border-color:#33465c;background:#1a212c}
+.btn:disabled{opacity:.35;cursor:not-allowed}
+.btn kbd{
+  border:1px solid var(--line);border-radius:3px;padding:0 5px;color:var(--dim);font-size:11px;
+}
+.btn.primary{border-color:#2b4a63}
+.btn.danger{border-color:#4a2a2a}
+
+/* ---------- attack menu ---------- */
+.menu{
+  position:absolute;right:14px;bottom:80px;width:450px;max-height:78vh;overflow:auto;
+  background:var(--panel);border:1px solid #33465c;box-shadow:0 12px 40px #000a;z-index:20;
+}
+.menu h3{margin:0;padding:7px 12px;font-size:11px;letter-spacing:.14em;color:var(--dim);
+  border-bottom:1px solid var(--line);font-weight:500}
+.menu .sub{padding:5px 12px;color:var(--dimmer);font-size:10.5px;border-bottom:1px solid var(--line)}
+.atk{display:block;width:100%;text-align:left;padding:5px 12px;border-bottom:1px solid #171d27}
+.atk:hover{background:#1a212c}
+.atk .top{display:flex;gap:8px;align-items:baseline}
+.atk .name{color:var(--ink)}
+.atk .code{margin-left:auto;color:var(--red);font-size:11px}
+.atk .blurb{color:var(--dimmer);font-size:10.5px;margin-top:1px;line-height:1.35}
+.atk .star{color:var(--amber)}
+.atk[disabled]{opacity:.4;cursor:not-allowed}
+
+/* ---------- editor ---------- */
+.editor{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(860px,88vw);
+  background:var(--panel);border:1px solid #33465c;box-shadow:0 12px 60px #000c;z-index:30;
+  display:flex;flex-direction:column;max-height:82vh;
+}
+.editor h3{margin:0;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12px;
+  font-weight:500;display:flex;gap:10px;align-items:baseline}
+.editor h3 .path{color:var(--dimmer);font-size:11px}
+.editor h3 .x{margin-left:auto;color:var(--dim)}
+.editor textarea{
+  flex:1 1 auto;min-height:320px;background:#0a0d12;color:var(--ink);border:0;
+  padding:10px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.5;resize:none;
+  outline:none;white-space:pre;overflow:auto;
+}
+.editor .foot{padding:8px 12px;border-top:1px solid var(--line);display:flex;gap:8px;
+  align-items:center;color:var(--dimmer);font-size:11px}
+.editor .foot .grow{flex:1}
+
+/* ---------- terminal strip ---------- */
+footer{
+  flex:0 0 auto;border-top:1px solid var(--line);background:#080a0e;
+  padding:8px 14px;height:148px;overflow:auto;
+}
+footer .cmd{color:var(--dim)}
+footer pre{margin:0;white-space:pre-wrap;color:var(--ink);font-size:12px}
+footer .exit{color:var(--dimmer)}
+footer .red{color:var(--red)}
+footer .green{color:var(--green)}
+footer .real{float:right;color:var(--dimmer);font-size:10.5px}
+footer .real b{font-weight:600;font-size:11.5px}
+.toast{
+  position:absolute;left:50%;bottom:150px;transform:translateX(-50%);
+  background:#1a212c;border:1px solid #33465c;padding:6px 14px;z-index:40;color:var(--ink);
+}
+.toast.bad{border-color:#4a2a2a;color:#ffb4ae}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>FLIGHT RECORDER</h1>
+    <div class="anchor">anchor <b id="anchor">—</b> <span class="note">← the only thing you trust</span></div>
+    <div class="source" id="source"></div>
+  </header>
+
+  <main>
+    <section>
+      <div class="head"><span>CHAIN</span><span id="count">0 rec</span></div>
+      <div class="body" id="spine"></div>
+      <div class="legend">
+        <span><span class="chip erased">🔑⌫</span> signing key erased</span>
+        <span><span class="chip live">🔑 live</span> the only key left</span>
+      </div>
+      <div class="hint">click a record to edit its bytes</div>
+    </section>
+
+    <section>
+      <div class="head"><span>EPISODE</span><span id="episodeId"></span></div>
+      <div class="body pane" id="episode"></div>
+    </section>
+
+    <section>
+      <div class="head"><span>VERDICT</span><span id="busy"></span></div>
+      <div class="body" style="padding:0">
+        <div class="status" id="status">
+          <div class="big" id="statusBig">—</div>
+          <div class="sub" id="statusSub">no episode recorded</div>
+          <div class="exit" id="statusExit"></div>
+        </div>
+        <div class="facts" id="facts"></div>
+        <div class="controls">
+          <button class="btn primary" id="btnRun"><kbd>1</kbd> Run the agent</button>
+          <button class="btn primary" id="btnInv"><kbd>2</kbd> Investigate</button>
+          <button class="btn danger" id="btnAtk"><kbd>3</kbd> Tamper ▾</button>
+          <button class="btn" id="btnVerify"><kbd>V</kbd> Verify</button>
+          <button class="btn" id="btnReset"><kbd>R</kbd> Reset</button>
+          <button class="btn" id="btnGolden"><kbd>G</kbd> Load golden episode</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer id="term">
+    <div class="cmd">$ <span id="termCmd">python verify_episode.py episode/</span>
+      <span class="real"><b id="termExit"></b>real subprocess · stdout verbatim</span></div>
+    <pre id="termOut">press 1 to record an episode</pre>
+  </footer>
+</div>
+
+<script>
+"use strict";
+// No verification logic lives in this file. The verdict is the subprocess exit
+// code the server hands back; everything here is rendering.
+
+const $ = id => document.getElementById(id);
+let S = null;           // last /api/state
+let sel = null;         // selected record seq
+let menuEl = null, editorEl = null, stream = null;
+let ablation = {retained:null, culprit:null, rounds:[]};
+
+const short = (h, n = 8) => h ? h.slice(0, n) : "—";
+
+// Paced rendering. The signing and the replays really are this fast, so without
+// pacing the whole of beat 1 lands in one frame and there is nothing to watch.
+// This delays *drawing*; every number drawn (sign_ms, scores, verdicts) is the
+// real one the server measured. Any keypress flushes the queue, so pacing can
+// never make the demo late.
+const paced = {q: [], timer: null};
+
+function pace(fn, ms) {
+  paced.q.push({fn, ms: ms == null ? 70 : ms});
+  schedulePaced();
+}
+
+function schedulePaced() {
+  if (paced.timer || !paced.q.length) return;
+  const item = paced.q[0];
+  paced.timer = setTimeout(() => {
+    paced.timer = null;
+    paced.q.shift();
+    item.fn();
+    schedulePaced();
+  }, item.ms);
+}
+
+function flushPaced() {
+  if (paced.timer) { clearTimeout(paced.timer); paced.timer = null; }
+  while (paced.q.length) paced.q.shift().fn();
+}
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || r.statusText);
+  return body;
+}
+
+function toast(msg, bad) {
+  const el = document.createElement("div");
+  el.className = "toast" + (bad ? " bad" : "");
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+
+/* ---------------- render ---------------- */
+
+function render(state) {
+  if (state) S = state;
+  if (!S) return;
+  $("anchor").textContent = S.anchor ? short(S.anchor, 12) + "…" + S.anchor.slice(-4) : "—";
+  $("count").textContent = S.count + " rec";
+  $("episodeId").textContent = S.episode || "";
+  $("source").textContent = S.source === "golden" ? "golden episode (not a live run)"
+                          : S.source === "live" ? "live run" : "";
+  $("source").className = "source" + (S.source === "golden" ? " golden" : "");
+  $("busy").textContent = S.busy ? S.busy + "…" : "";
+  renderSpine();
+  renderEpisode();
+  renderStatus();
+  $("btnRun").disabled = !!S.busy || S.exists;
+  $("btnInv").disabled = !!S.busy || !S.exists || !S.appendable ||
+                         !!(S.episode_view.finding) || !S.episode_view.violation;
+  $("btnAtk").disabled = !!S.busy || !S.exists;
+  $("btnVerify").disabled = !!S.busy || !S.exists;
+}
+
+function restoreTerminal() {
+  // A reload keeps the verdict, so it must keep the output that produced it --
+  // a RED status block above an empty terminal strip would look invented.
+  const v = S && S.verdict;
+  if (v) term(v.command, v.stdout + (v.stderr || "") + `\n  exit ${v.returncode}`, v.returncode);
+  else if (S && S.exists) term("python verify_episode.py episode/", "press V to verify");
+  else term("python verify_episode.py episode/", "press 1 to record an episode");
+}
+
+function renderSpine() {
+  const host = $("spine");
+  const v = S.verdict;
+  const badSeq = v && !v.green ? v.seq : null;
+  const culprit = S.episode_view.finding && S.episode_view.finding.culprit;
+  host.innerHTML = "";
+  S.records.forEach((r, i) => {
+    const row = document.createElement("div");
+    const cls = ["rec"];
+    if (r.type === "POLICY_VIOLATION") cls.push("violation");
+    if (r.type === "SEAL") cls.push("seal");
+    if (r.type === "ATTRIBUTION_FINDING") cls.push("finding");
+    if (r.edited) cls.push("edited");
+    if (badSeq !== null && r.seq === badSeq) cls.push("bad");
+    if (badSeq !== null && r.seq > badSeq) cls.push("downstream");
+    if (sel === r.seq) cls.push("selected");
+    row.className = cls.join(" ");
+    row.dataset.seq = r.seq;
+
+    // A break in the chain is drawn as a severed link, so the data structure
+    // explains itself without a sentence of narration.
+    const severed = badSeq !== null && r.seq >= badSeq;
+    const link = i === 0 ? "●" : (severed ? "✕" : "│");
+    const label = (r.type === "POLICY_VIOLATION" ? "⚠ " : "") + (r.type || "?");
+    row.innerHTML =
+      `<span class="link">${link}</span>` +
+      `<span class="seq">${String(r.seq).padStart(3, "0")}</span>` +
+      `<span class="type">${esc(label)}</span>` +
+      `<span class="hash">${short(r.hash, 6)}</span>` +
+      `<span class="ms">${r.sign_ms != null ? r.sign_ms + " ms" : ""}</span>` +
+      keyChip(r);
+
+    if (culprit && r.type === "ATTRIBUTION_FINDING") row.classList.add("culprit");
+    row.onclick = () => openEditor(r.seq);
+    host.appendChild(row);
+  });
+  if (!S.records.length) host.innerHTML = `<div class="hint">no records yet — press 1</div>`;
+}
+
+function keyChip(r) {
+  if (!r.key) return "";
+  // The whole forward-security argument, as a chip. The key glyph is an emoji and
+  // ignores CSS colour, so erased vs live is carried by the text beside it: a
+  // column of struck-through keys with exactly one "live" is readable at a glance.
+  if (r.key.erased) {
+    const t = `sk_${r.seq} signed this record, then was erased before record ${r.seq + 1} existed`;
+    return `<span class="chip erased" title="${t}">🔑⌫</span>`;
+  }
+  const t = `sk_${r.seq} is the newest key. The next append erases it.`;
+  return `<span class="chip live" title="${t}">🔑 live</span>`;
+}
+
+function renderEpisode() {
+  const e = S.episode_view, host = $("episode");
+  if (!S.exists) { host.innerHTML = `<div class="hint">press 1 to run the agent</div>`; return; }
+  let h = "";
+  if (e.task) h += `<div class="label">TASK</div><div class="task">“${esc(e.task)}”</div>`;
+  if (e.chunks.length) {
+    h += `<div class="label">RETRIEVED</div>`;
+    h += e.chunks.map(c => chunkRow(c, e)).join("");
+  }
+  if (ablation.rounds.length) {
+    h += `<div class="label">BISECTION</div><div class="rounds">` +
+         ablation.rounds.map(r => `<div class="round">round <b>${r.round}</b> · retain ${r.left.length} → ${r.left_violation ? "violation ✓" : "clean ✗"} · retain ${r.right.length} → ${r.right_violation ? "violation ✓" : "clean ✗"}</div>`).join("") +
+         `</div>`;
+  }
+  if (e.violation) {
+    h += `<div class="label">POLICY</div><div class="banner">⚠ ${esc(e.violation.tool)}` +
+         `<span class="rule"> — ${esc(e.violation.rule)}</span>` +
+         `<div class="rule">${esc(e.violation.reason || "")} · record ${e.violation.offending_seq}</div></div>`;
+  }
+  if (e.finding) {
+    const f = e.finding, c = f.culprit;
+    h += `<div class="label">FINDING</div>` +
+         `<div class="verdictbox ${c ? "" : "multi"}"><h4>${esc(f.verdict)} · confidence ${esc(f.confidence)}</h4>` +
+         (c ? `<div class="kv">culprit <b>${esc(c.doc_id)}</b> chunk <b>${c.chunk_id}</b> chars ${c.char_span[0]}–${c.char_span[1]}</div>` : "") +
+         `<div class="kv">necessity <b>${f.necessity_milli}</b>/1000 · sufficiency <b>${f.sufficiency_milli}</b>/1000 · runner-up <b>${f.runner_up_necessity_milli}</b>/1000</div>` +
+         `<div class="kv">${f.replay_seqs.length} replays signed into the chain</div></div>` +
+         `<div id="docHost"></div>`;
+  }
+  host.innerHTML = h;
+  if (e.finding && e.finding.culprit) showSpan(e.finding.culprit);
+}
+
+function chunkRow(c, e) {
+  const cls = [];
+  const culprit = e.finding && e.finding.culprit &&
+                  e.finding.culprit.doc_id === c.doc_id && e.finding.culprit.chunk_id === c.chunk_id;
+  if (culprit) cls.push("culprit");
+  if (ablation.retained) cls.push(ablation.retained.includes(c.key) ? "retained" : "ablated");
+  return `<div class="chunk ${cls.join(" ")}"><span class="id">▸ ${esc(c.doc_id)} c${c.chunk_id}` +
+         (culprit ? ` <span class="skull">☠</span>` : "") + `</span>` +
+         `<span class="sc">${c.score_milli}</span></div>`;
+}
+
+async function showSpan(culprit) {
+  const host = $("docHost");
+  if (!host) return;
+  try {
+    const doc = await api("/api/doc?doc_id=" + encodeURIComponent(culprit.doc_id));
+    const [a, b] = culprit.char_span;
+    host.innerHTML = `<div class="doc">${esc(doc.text.slice(Math.max(0, a - 220), a))}` +
+      `<mark>${esc(doc.text.slice(a, b))}</mark>` +
+      `${esc(doc.text.slice(b, b + 220))}</div>`;
+    const mark = host.querySelector("mark");
+    if (mark) mark.scrollIntoView({block: "center"});
+  } catch (err) { /* the span highlight is a nicety, never a blocker */ }
+}
+
+function renderStatus() {
+  const box = $("status"), v = S.verdict;
+  const dirty = S.records.some(r => r.edited);
+  let cls = "status", big = "—", sub = "no episode recorded", exit = "";
+  if (v) {
+    cls += v.green ? " green" : " red";
+    big = v.green ? "GREEN" : "RED";
+    sub = v.green ? "chain intact · sealed" : v.reason || "verification failed";
+    // On RED the walk stopped where it failed, so claiming every signature was
+    // verified would be a lie a judge could catch.
+    exit = v.green
+      ? `ML-DSA-65 · ${v.records} sigs verified · ${v.elapsed_ms} ms · exit ${v.returncode}`
+      : `ML-DSA-65 · stopped at record ${v.seq == null ? "?" : v.seq} of ${v.records}` +
+        ` · ${v.elapsed_ms} ms · exit ${v.returncode}`;
+  } else if (dirty) {
+    cls += " amber"; big = "EDITED";
+    sub = "bytes changed · unverified";
+    exit = "press V to run the verifier";
+  } else if (S.exists) {
+    big = "—"; sub = "not yet verified"; exit = "press V";
+  }
+  box.className = cls;
+  $("statusBig").textContent = big;
+  $("statusSub").textContent = sub;
+  $("statusExit").textContent = exit;
+
+  const f = $("facts");
+  const seals = S.episode_view.seals;
+  f.innerHTML = S.exists
+    ? `<div>records <b>${S.count}</b> · seals [${seals.join(", ") || "—"}]</div>` +
+      `<div>${S.appendable ? "recorder open (a live key exists)" : "append-closed (no key on disk)"}</div>`
+    : "";
+}
+
+const esc = s => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/* ---------------- terminal strip ---------------- */
+
+function term(cmd, out, rc) {
+  $("termCmd").textContent = cmd;
+  const pre = $("termOut");
+  pre.textContent = out;
+  pre.className = rc === undefined ? "" : (rc === 0 ? "green" : "red");
+  // The exit code is the verdict, so it is pinned to the header line rather than
+  // left to scroll off the end of the output.
+  const exit = $("termExit");
+  exit.textContent = rc === undefined ? "" : `exit ${rc}   `;
+  exit.className = rc === undefined ? "" : (rc === 0 ? "green" : "red");
+  $("term").scrollTop = 0;
+}
+
+function termAppend(line) {
+  $("termOut").textContent += (line.endsWith("\n") ? line : line + "\n");
+  $("term").scrollTop = $("term").scrollHeight;
+}
+
+/* ---------------- actions ---------------- */
+
+async function verify() {
+  if (!S || !S.exists) return;
+  term("python verify_episode.py episode/", "running…");
+  try {
+    const v = await api("/api/verify", {method: "POST"});
+    term(v.command, v.stdout + (v.stderr || "") + `\n  exit ${v.returncode}`, v.returncode);
+    await refresh();
+  } catch (err) { toast(err.message, true); }
+}
+
+function runStream(url, name, handlers) {
+  closeMenu();
+  flushPaced();
+  ablation = {retained: null, culprit: null, rounds: []};
+  term("python -m " + name, "");
+  if (stream) stream.close();
+  stream = new EventSource(url);
+  for (const [event, fn] of Object.entries(handlers)) stream.addEventListener(event, ev => {
+    fn(JSON.parse(ev.data));
+  });
+  // "failed" is ours; EventSource's own "error" fires on any disconnect.
+  stream.addEventListener("failed", ev => {
+    const d = JSON.parse(ev.data);
+    toast(d.message, true);
+    termAppend("  " + d.message);
+  });
+  stream.addEventListener("done", ev => {
+    stream.close(); stream = null;
+    const state = JSON.parse(ev.data).state;
+    pace(() => { render(state); verify(); }, 120);
+  });
+}
+
+function pushRecord(r) {
+  // Optimistic: draw the record the moment the server says it was signed. The
+  // authoritative picture arrives with the `done` event.
+  if (!S) return;
+  S.records.push({seq: r.seq, type: r.type, actor: r.actor, ts_ns: r.ts_ns, prev: r.prev,
+                  hash: r.hash, sign_ms: r.sign_ms, edited: false,
+                  key: {signed_at: r.ts_ns, erased_at: null, erased: false}});
+  if (S.records.length > 1) {
+    const prev = S.records[S.records.length - 2];
+    if (prev.key) { prev.key.erased = true; prev.key.erased_at = r.ts_ns; }
+  }
+  S.count = S.records.length;
+  S.exists = true;
+  if (r.type === "USER_INPUT") S.episode_view.task = r.payload.text;
+  if (r.type === "RETRIEVAL") S.episode_view.chunks = (r.payload.chunks || []).map(c => ({
+    ...c, key: c.doc_id + "#" + c.chunk_id}));
+  if (r.type === "POLICY_VIOLATION") S.episode_view.violation = {
+    seq: r.seq, rule: r.payload.rule, tool: r.payload.tool,
+    offending_seq: r.payload.offending_seq, reason: r.payload.reason};
+  if (r.type === "ATTRIBUTION_FINDING") S.episode_view.finding = r.payload;
+  if (r.type === "SEAL") S.episode_view.seals.push(r.seq);
+  renderSpine(); renderEpisode(); renderStatus();
+  const host = $("spine");
+  const last = host.lastElementChild;
+  if (last) { last.classList.add("new"); host.scrollTop = host.scrollHeight; }
+  termAppend(`  ${String(r.seq).padStart(6, "0")}  ${r.type.padEnd(20)} signed in ${r.sign_ms} ms`);
+}
+
+function runAgent() {
+  if ($("btnRun").disabled) return;
+  runStream("/api/run/events", "agent.rag --scenario poisoned", {
+    start: () => termAppend("$ python -m agent.rag --scenario poisoned --out episode/"),
+    record: r => pace(() => pushRecord(r)),
+    recorded: d => pace(() =>
+      termAppend(`  ${d.count} records · anchor ${short(d.anchor, 16)}… · ${d.elapsed_ms} ms`)),
+  });
+}
+
+function runInvestigate() {
+  if ($("btnInv").disabled) return;
+  runStream("/api/investigate/events", "investigator.cli episode/", {
+    log: d => pace(() => termAppend(d.line), 40),
+    chunks: d => pace(() => {
+      ablation.retained = d.chunks.map(c => c.doc_id + "#" + c.chunk_id);
+      renderEpisode();
+    }, 250),
+    bisect_round: d => pace(() => {
+      ablation.rounds.push(d);
+      // Show the half the search is keeping, so the convergence is visible.
+      ablation.retained = d.left_violation ? d.left
+                        : (d.right_violation ? d.right : ablation.retained);
+      renderEpisode();
+    }, 380),
+    confirm: d => pace(() => { ablation.retained = [d.key]; renderEpisode(); }, 380),
+    record: r => pace(() => pushRecord(r), 25),
+    verdict: d => pace(() => {
+      S.episode_view.finding = d.finding;
+      ablation.retained = null;
+      renderEpisode();
+    }, 200),
+  });
+}
+
+/* ---------------- attack menu ---------------- */
+
+function closeMenu() { if (menuEl) { menuEl.remove(); menuEl = null; } }
+
+function openMenu() {
+  if (menuEl) { closeMenu(); return; }
+  if (!S || !S.exists) { toast("record an episode first", true); return; }
+  menuEl = document.createElement("div");
+  menuEl.className = "menu";
+  menuEl.innerHTML = `<h3>ATTACK THE EVIDENCE</h3>` +
+    `<div class="sub">every entry is a mutation from tests/test_tamper_matrix.py — ` +
+    `the reason code beside it is asserted by that test</div>` +
+    S.attacks.map((a, i) => {
+      const needsKey = a.requires === "live_key" && !S.appendable;
+      return `<button class="atk" data-key="${a.key}" ${needsKey ? "disabled" : ""}>` +
+        `<div class="top"><span class="name">${a.star ? '<span class="star">★</span> ' : ""}${esc(a.label)}</span>` +
+        `<span class="code">${esc(a.reason)}</span></div>` +
+        `<div class="blurb">${esc(a.blurb)}${needsKey ? " (needs a live recorder — record a fresh episode)" : ""}</div></button>`;
+    }).join("");
+  document.body.appendChild(menuEl);
+  menuEl.querySelectorAll(".atk").forEach(b => b.onclick = () => tamper(b.dataset.key));
+}
+
+async function tamper(key) {
+  closeMenu();
+  try {
+    const r = await api("/api/tamper/" + encodeURIComponent(key), {method: "POST"});
+    render(r.state);
+    termAppend(`$ # ${r.label}\n  ${r.note}`);
+    toast(`${r.label} → expecting ${r.expected_reason}`);
+    await verify();
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------- record editor ---------------- */
+
+function closeEditor() { if (editorEl) { editorEl.remove(); editorEl = null; sel = null; renderSpine(); } }
+
+async function openEditor(seq) {
+  if (seq == null || !S.exists) return;
+  closeEditor();
+  sel = seq;
+  let rec;
+  try { rec = await api("/api/records/" + seq); }
+  catch (err) { toast(err.message, true); return; }
+  editorEl = document.createElement("div");
+  editorEl.className = "editor";
+  editorEl.innerHTML =
+    `<h3>record ${String(seq).padStart(6, "0")} <span class="path">${esc(rec.path)} · ${rec.bytes} bytes</span>` +
+    `<span class="x">esc to close</span></h3>` +
+    `<textarea spellcheck="false"></textarea>` +
+    `<div class="foot"><span class="grow">edit anything · the signature covers every byte of <b>body</b></span>` +
+    `<button class="btn" id="edSave">Save &amp; verify (⌘/ctrl+enter)</button></div>`;
+  document.body.appendChild(editorEl);
+  const ta = editorEl.querySelector("textarea");
+  ta.value = rec.text;
+  ta.focus();
+  editorEl.querySelector("#edSave").onclick = () => saveEditor(seq, ta.value);
+  ta.addEventListener("keydown", ev => {
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) { ev.preventDefault(); saveEditor(seq, ta.value); }
+  });
+  renderSpine();
+}
+
+async function saveEditor(seq, text) {
+  try {
+    const r = await api("/api/records/" + seq, {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text})});
+    closeEditor();
+    render(r.state);
+    await verify();
+  } catch (err) { toast(err.message, true); }
+}
+
+/* ---------------- lifecycle ---------------- */
+
+async function boot() { render(await api("/api/state")); restoreTerminal(); }
+
+async function refresh() { render(await api("/api/state")); }
+
+async function reset() {
+  if (stream) { stream.close(); stream = null; }
+  flushPaced();
+  closeMenu(); closeEditor();
+  ablation = {retained: null, culprit: null, rounds: []};
+  try {
+    render(await api("/api/reset", {method: "POST"}));
+    term("python verify_episode.py episode/", "press 1 to record an episode");
+    toast("reset");
+  } catch (err) { toast(err.message, true); }
+}
+
+async function loadGolden() {
+  closeMenu(); closeEditor();
+  try {
+    render(await api("/api/load-golden", {method: "POST"}));
+    toast("loaded the committed golden episode — this is not a live run");
+    await verify();
+  } catch (err) { toast(err.message, true); }
+}
+
+$("btnRun").onclick = runAgent;
+$("btnInv").onclick = runInvestigate;
+$("btnAtk").onclick = openMenu;
+$("btnVerify").onclick = verify;
+$("btnReset").onclick = reset;
+$("btnGolden").onclick = loadGolden;
+
+// Three keys drive the demo. The presenter never hunts for a button.
+document.addEventListener("keydown", ev => {
+  if (ev.target.tagName === "TEXTAREA" && ev.key !== "Escape") return;
+  if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const k = ev.key.toLowerCase();
+  // Any key skips ahead: an animation must never be the reason a demo runs long.
+  if (paced.q.length && "123vrg".includes(k)) flushPaced();
+  if (k === "1") runAgent();
+  else if (k === "2") runInvestigate();
+  else if (k === "3") openMenu();
+  else if (k === "v") verify();
+  else if (k === "r") reset();
+  else if (k === "g") loadGolden();
+  else if (k === "escape") { closeMenu(); closeEditor(); }
+  else return;
+  ev.preventDefault();
+});
+
+document.addEventListener("click", ev => {
+  if (menuEl && !menuEl.contains(ev.target) && !ev.target.closest("#btnAtk")) closeMenu();
+});
+
+boot();
+</script>
+</body>
+</html>

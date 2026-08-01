@@ -190,7 +190,7 @@ class RecordingAgent:
 
 
 def run_episode(out, scenario="poisoned", backend_name="mock", task=DEFAULT_TASK,
-                top_k=DEFAULT_TOP_K, seed=None, model=None):
+                top_k=DEFAULT_TOP_K, seed=None, model=None, on_record=None):
     corpus = build_corpus(scenario)
     backend = llm_mod.get_backend(backend_name, model=model)
     policy = PolicyEngine(
@@ -200,7 +200,7 @@ def run_episode(out, scenario="poisoned", backend_name="mock", task=DEFAULT_TASK
     )
     params = backend.request_params()
 
-    rec = Recorder.open_new(out, actor=AGENT_VERSION, seed=seed)
+    rec = Recorder.open_new(out, actor=AGENT_VERSION, seed=seed, on_append=on_record)
     payload = genesis_payload(
         agent_version=AGENT_VERSION,
         model_id=backend.model_id,

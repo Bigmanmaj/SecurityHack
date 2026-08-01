@@ -11,18 +11,20 @@ Two kinds of attack are modelled, and the distinction is the point of the projec
   record k+1's ``prev``, or the ratchet commitment pointing somewhere else.
 
 ``seed_at(seed0, k)`` here plays the role of "the seed the attacker found in
-memory"; in a real compromise they would read it off the box.
+memory"; in a real compromise they would read it off the box, which is what
+:func:`live_seed` does against a recorder that is still open.
 """
 
 import base64
 import json
 import os
 import shutil
+import time
 
 from fr import canon, pqc
 from fr.hashes import sha3_hex
 from fr.ratchet import seed_at
-from fr.recorder import RECORDS_DIRNAME, record_filename
+from fr.recorder import RECORDS_DIRNAME, STATE_FILENAME, record_filename
 
 
 def record_path(root, seq):
@@ -97,6 +99,63 @@ def swap_anchor(root, value=None):
     with open(path, "w", encoding="ascii") as fh:
         fh.write((value or sha3_hex(b"a different chain entirely")) + "\n")
     return path
+
+
+def live_seed(root):
+    """The seed the recorder holds *right now*, as an attacker with root would read it.
+
+    Returns ``(seed, next_seq, prev_hash)`` or ``None`` when the episode has been
+    closed to appends. This is the honest shape of a real compromise: it buys the
+    ability to sign the next record, and nothing at all about the previous ones.
+    """
+    path = os.path.join(root, STATE_FILENAME)
+    if not os.path.exists(path):
+        return None
+    with open(path, "r", encoding="utf-8") as fh:
+        state = json.load(fh)
+    return bytes.fromhex(state["seed"]), state["next_seq"], state["prev_hash"]
+
+
+def forge_append(root, episode, seq, prev, seed, type_="AGENT_FINAL", payload=None,
+                 actor="operator:seized-the-box@1", ts_ns=None):
+    """Append a record signed with a seized live key.
+
+    The attacker can do this -- forward security protects the past, not the future.
+    What they cannot do is make the forged record claim a different past: ``prev``
+    is checked against the record that is already on disk.
+    """
+    from fr import record as R
+    from fr.ratchet import Ratchet
+
+    ratchet = Ratchet(seed, index=seq)
+    body = R.make_body(
+        episode=episode,
+        seq=seq,
+        ts_ns=ts_ns if ts_ns is not None else time.time_ns(),
+        prev=prev,
+        next_pk=ratchet.next_pk_hash,
+        type_=type_,
+        actor=actor,
+        payload=payload if payload is not None else {"text": "nothing to see here"},
+    )
+    message = canon.dumps(body)
+    entry = {
+        "body": body,
+        "sig": {
+            "alg": pqc.ALG,
+            "pk": base64.b64encode(ratchet.pk).decode("ascii"),
+            "value": base64.b64encode(ratchet.sign(message)).decode("ascii"),
+        },
+    }
+    write_record(root, seq, entry)
+    return sha3_hex(message)
+
+
+def splice_record(root, seq, source_root, source_seq=None):
+    """Drop a record from a different episode into this one, byte for byte."""
+    entry = load_record(source_root, seq if source_seq is None else source_seq)
+    write_record(root, seq, entry)
+    return entry["body"]
 
 
 def swap_blob(root, digest, data=b"swapped payload"):

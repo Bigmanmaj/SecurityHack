@@ -26,7 +26,7 @@ key ratchet** — *the key that signed record 7 was erased before record 8 exist
 ```bash
 pip install -e ".[dev]"     # one runtime dependency: dilithium-py (pure Python)
 make demo                   # three beats, hermetic, no network
-make test                   # 113 tests, including the full tamper matrix
+make test                   # 163 tests, including the full tamper matrix
 ```
 
 Three verbs, nothing else:
@@ -35,6 +35,12 @@ Three verbs, nothing else:
 python -m agent.rag --scenario poisoned --out episode/   # record
 python verify_episode.py episode/                        # GREEN/RED, exit 0/1
 python -m investigator.cli episode/                      # investigate + sign finding
+```
+
+And, additively, a browser demo of the same three verbs:
+
+```bash
+pip install -e ".[web]" && make web     # http://127.0.0.1:8000
 ```
 
 ---
@@ -288,6 +294,53 @@ takes a majority, writes every raw response into the chain, and reports reduced
 
 ---
 
+## The browser demo
+
+`make web` serves one screen on `127.0.0.1:8000`. It exists to render three things
+that are invisible by nature — a judge cannot feel a SHA3 mismatch:
+
+- **The chain**, as a spine of records, so a break is *seen* rather than read. A RED
+  verdict severs the link glyph at the failing record and greys everything downstream.
+- **The erased keys**, as a `🔑⌫` chip on every record with exactly one amber `🔑 live`
+  at the head. Thirty-two struck-through keys and one live one is the forward-security
+  argument without a sentence of explanation.
+- **Direct tampering.** Click any record, edit a byte by hand, watch it go RED.
+
+Keys `1` `2` `3` drive it (run, investigate, tamper), `V` verifies, `R` resets, `G`
+loads the golden episode. One screen, no routes, no tabs, no modals, no build step,
+and zero external requests — no CDN, no fonts, not even a favicon fetch.
+
+### It must not become the thing being trusted
+
+A polished web UI at a security hackathon invites exactly one suspicion: *the
+verification is faked in JavaScript.* So:
+
+- **No verification logic runs in the browser or in the server.** `POST /api/verify`
+  runs `subprocess.run(["python", "verify_episode.py", ...])`, and the page renders
+  that stdout verbatim next to the integer exit code. A test asserts the API's stdout
+  is byte-identical to the same command run by hand, which is the offer we make to a
+  sceptical judge.
+- **The attack menu is the test suite.** Every entry is an `Attack` in
+  `demo/attacks.py` with a declared reason code, and `tests/test_tamper_matrix.py`
+  parametrises over that registry. The button a judge presses is the mutation the
+  tests prove — there is no second implementation to drift.
+- **Real numbers only.** Each record shows the signing time the recorder actually
+  measured; the status block shows real verify wall-time. Signing and replaying are
+  fast enough that a whole beat would otherwise land in one frame, so *drawing* is
+  paced — but every number drawn is measured, and any keypress flushes the queue so
+  an animation can never make the demo run long.
+- **On RED it says where it stopped**, not how many signatures it verified, because
+  the walk halts at the first failure.
+
+### The write endpoint is the threat model
+
+`PUT /api/records/{seq}` writes attacker-chosen bytes to a record file. That is the
+whole point: the claim is that write access to the log directory is not enough, so
+the demo hands the judge write access. It is not, however, an excuse to ship a real
+path traversal at a security hackathon — `seq` is an integer, the path is constructed
+server-side from it, the result is asserted to sit inside the episode root, nothing
+uses `shell=True`, and uvicorn binds to loopback only. Those properties are tested.
+
 ## Repo layout
 
 ```
@@ -295,9 +348,10 @@ verify_episode.py           # standalone verifier CLI (dep: dilithium-py)
 fr/       canon.py  hashes.py  pqc.py  ratchet.py  record.py  recorder.py  policy.py  reasons.py
 agent/    rag.py  llm.py  tools.py  corpus.py  corpus/*.md
 investigator/  ablate.py  attribute.py  cli.py
+demo/     demo.sh  tamper.py  publish_witness.py  adversary.py  attacks.py
+web/      app.py  index.html    # FastAPI + one page, no build step
 tests/    test_canon.py  test_ratchet.py  test_tamper_matrix.py  test_corpus.py
-          test_policy.py  test_investigator.py  test_end_to_end.py  adversary.py
-demo/     demo.sh  tamper.py
+          test_policy.py  test_investigator.py  test_end_to_end.py  test_web.py
 episodes/golden/            # a committed, pre-verified episode — demo insurance
 ```
 

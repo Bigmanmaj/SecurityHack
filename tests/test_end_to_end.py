@@ -10,9 +10,9 @@ import sys
 
 import pytest
 
-import adversary as adv
 import verify_episode
 from agent import rag
+from demo import adversary as adv
 from fr import reasons
 from investigator import attribute
 from investigator.cli import InvestigationError, investigate

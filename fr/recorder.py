@@ -53,7 +53,8 @@ class Recorder:
     against the past, which is exactly the property the threat model claims.
     """
 
-    def __init__(self, root, episode, ratchet, next_seq, prev_hash, actor, state_path):
+    def __init__(self, root, episode, ratchet, next_seq, prev_hash, actor, state_path,
+                 on_append=None):
         self.root = root
         self.episode = episode
         self.ratchet = ratchet
@@ -61,13 +62,17 @@ class Recorder:
         self.prev_hash = prev_hash
         self.actor = actor
         self.state_path = state_path
+        # Called with (body, sign_ms) after each record lands. Observation only: it
+        # cannot alter what was written, and a listener raising must not corrupt
+        # the chain, so exceptions from it are the caller's problem, not ours.
+        self.on_append = on_append
         self.last_ts_ns = 0
         self.sealed = False
 
     # ------------------------------------------------------------------ setup
 
     @classmethod
-    def open_new(cls, root, actor, episode=None, seed=None):
+    def open_new(cls, root, actor, episode=None, seed=None, on_append=None):
         root = os.path.abspath(root)
         if os.path.exists(os.path.join(root, RECORDS_DIRNAME)) and os.listdir(
             os.path.join(root, RECORDS_DIRNAME)
@@ -85,12 +90,13 @@ class Recorder:
             prev_hash=ZERO_HASH,
             actor=actor,
             state_path=os.path.join(root, STATE_FILENAME),
+            on_append=on_append,
         )
         rec._save_state()
         return rec
 
     @classmethod
-    def reopen(cls, root, actor=None):
+    def reopen(cls, root, actor=None, on_append=None):
         root = os.path.abspath(root)
         state_path = os.path.join(root, STATE_FILENAME)
         if not os.path.exists(state_path):
@@ -109,6 +115,7 @@ class Recorder:
             prev_hash=state["prev_hash"],
             actor=actor or state["actor"],
             state_path=state_path,
+            on_append=on_append,
         )
         rec.last_ts_ns = state.get("last_ts_ns", 0)
         return rec
@@ -182,7 +189,9 @@ class Recorder:
             payload=payload,
         )
         message = canon.assert_stable(body)
+        signing_started = time.perf_counter()
         signature = self.ratchet.sign(message)
+        sign_ms = int((time.perf_counter() - signing_started) * 1000)
         entry = {
             "body": body,
             "sig": {
@@ -198,6 +207,8 @@ class Recorder:
         self.last_ts_ns = ts_ns
         self.ratchet.advance()
         self._save_state()
+        if self.on_append:
+            self.on_append(body, sign_ms)
         return body
 
     def anchor_record(self):

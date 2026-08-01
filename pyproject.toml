@@ -13,14 +13,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==8.3.4"]
+dev = ["pytest==8.3.4", "fastapi==0.141.1", "uvicorn==0.52.0", "httpx"]
 live = ["anthropic>=0.40"]
+web = ["fastapi==0.141.1", "uvicorn==0.52.0"]
 
 [tool.setuptools]
-packages = ["fr", "agent", "investigator"]
+packages = ["fr", "agent", "investigator", "demo", "web"]
 
 [tool.setuptools.package-data]
 agent = ["corpus/*.md"]
+web = ["index.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

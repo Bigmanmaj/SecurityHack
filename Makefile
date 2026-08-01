@@ -1,7 +1,7 @@
 PY ?= python3
 EPISODE ?= episode
 
-.PHONY: install test demo record verify investigate tamper golden clean
+.PHONY: install test demo web record verify investigate tamper golden clean
 
 install:
 	$(PY) -m pip install -e ".[dev]"
@@ -24,6 +24,12 @@ tamper:
 
 demo:
 	@bash demo/demo.sh $(EPISODE)
+
+# The browser demo. Loopback only: this server hands out a write endpoint on
+# purpose, and it has no business being reachable from the network.
+web:
+	@echo "  http://127.0.0.1:$${FR_PORT:-8000}   —   keys: 1 run · 2 investigate · 3 tamper · R reset"
+	$(PY) -m web.app
 
 golden:
 	rm -rf episodes/golden

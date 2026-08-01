@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from flightrec.llm import (
     cache_key,
     make_text_response,
     make_tool_use_response,
+    split_system,
 )
 
 MESSAGES = [{"role": "user", "content": "I want a refund on my last payment"}]
@@ -97,6 +99,50 @@ def test_a_system_message_is_part_of_the_cache_key():
     with_system = [{"role": "system", "content": "you are a support agent"}, *MESSAGES]
 
     assert cache_key("m", with_system, TOOLS) != cache_key("m", MESSAGES, TOOLS)
+
+
+def test_split_system_lifts_a_leading_system_message_out():
+    system, conversation = split_system(
+        [{"role": "system", "content": "be helpful"}, *MESSAGES]
+    )
+
+    assert system == "be helpful"
+    assert conversation == MESSAGES
+
+    with pytest.raises(ValueError, match="only appear first"):
+        split_system([*MESSAGES, {"role": "system", "content": "late"}])
+
+
+def test_remote_sends_temperature_zero_and_the_system_prompt_separately(tmp_path):
+    """The live request shape, exercised without a network call."""
+    sent = {}
+
+    class FakeMessages:
+        def create(self, **request):
+            sent.update(request)
+            return SimpleNamespace(
+                model_dump_json=lambda: json.dumps(make_text_response("hi"))
+            )
+
+    llm = AnthropicLLM("claude-test", cache_dir=tmp_path)
+    llm._client = SimpleNamespace(messages=FakeMessages())
+
+    response = llm.call([{"role": "system", "content": "be helpful"}, *MESSAGES], TOOLS)
+
+    assert sent["temperature"] == 0.0
+    assert sent["system"] == "be helpful"
+    assert sent["messages"] == MESSAGES
+    assert sent["tools"] == TOOLS
+    assert response["content"][0]["text"] == "hi"
+    assert (tmp_path / f"{cache_key('claude-test', [{'role': 'system', 'content': 'be helpful'}, *MESSAGES], TOOLS)}.json").exists()
+
+
+def test_remote_without_an_api_key_explains_itself(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    llm = AnthropicLLM("claude-test", cache_dir=tmp_path)
+
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        llm.call(MESSAGES, TOOLS)
 
 
 def test_fake_llm_returns_scripted_responses_and_records_what_it_was_asked():

@@ -116,6 +116,21 @@ def test_load_trust_dir_raises_on_unreadable_key(tmp_path):
         load_trust_dir(directory)
 
 
+def test_load_trust_dir_raises_on_a_wrong_length_key(tmp_path, keyring):
+    directory = tmp_path / "trust"
+    directory.mkdir()
+    (directory / "recorder.pub.hex").write_text(keyring["recorder"][0][:100].hex())
+    with pytest.raises(ValueError):
+        load_trust_dir(directory)
+
+
+@pytest.mark.parametrize("truncate", [0, 100, 1951])
+def test_verify_returns_false_for_an_unusable_public_key(keyring, truncate):
+    public_key, secret_key = keyring["recorder"]
+    signature = sign_payload(secret_key, {"a": 1})
+    assert not verify_payload(public_key[:truncate], {"a": 1}, signature)
+
+
 def test_secret_key_never_reaches_the_trust_dir(trust_dir, secret_keys):
     published = "".join(path.read_text() for path in trust_dir.iterdir())
     for secret_key in secret_keys.values():

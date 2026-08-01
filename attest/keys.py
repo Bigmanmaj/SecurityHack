@@ -11,6 +11,8 @@ from .canonical import canonical_bytes
 
 SIGNER_IDS = ("recorder", "anchor-1", "investigator", "anchor-2")
 
+PUBLIC_KEY_BYTES = 1952
+
 _KEY_SUFFIX = ".pub.hex"
 
 
@@ -25,12 +27,20 @@ def sign_payload(secret_key, payload):
 
 
 def verify_payload(public_key, payload, signature_hex):
-    """Return True iff ``signature_hex`` is a valid signature over the payload."""
+    """Return True iff ``signature_hex`` is a valid signature over the payload.
+
+    An unusable signature or public key is a failed verification, not an
+    exception: the verifier must be able to report a reason for any input.
+    """
+    message = canonical_bytes(payload)
     try:
         signature = bytes.fromhex(signature_hex)
     except (ValueError, TypeError):
         return False
-    return ML_DSA_65.verify(public_key, canonical_bytes(payload), signature)
+    try:
+        return ML_DSA_65.verify(public_key, message, signature)
+    except ValueError:
+        return False
 
 
 def write_public_key(trust_dir, signer_id, public_key):
@@ -52,9 +62,10 @@ def load_trust_dir(trust_dir):
     trusted = {}
     for path in sorted(directory.glob(f"*{_KEY_SUFFIX}")):
         try:
-            trusted[path.name[: -len(_KEY_SUFFIX)]] = bytes.fromhex(
-                path.read_text(encoding="utf-8").strip()
-            )
+            public_key = bytes.fromhex(path.read_text(encoding="utf-8").strip())
         except ValueError as error:
             raise ValueError(f"trusted key {path.name} is not valid hex") from error
+        if len(public_key) != PUBLIC_KEY_BYTES:
+            raise ValueError(f"trusted key {path.name} is not an ML-DSA-65 public key")
+        trusted[path.name[: -len(_KEY_SUFFIX)]] = public_key
     return trusted

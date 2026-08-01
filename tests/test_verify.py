@@ -128,6 +128,11 @@ def test_a_missing_trust_dir_is_never_green(episode_dir, tmp_path):
     assert reasons == [f"UNREADABLE_TRUST_DIR({tmp_path / 'nope'})"]
 
 
+def test_a_corrupt_trust_dir_is_reported_not_raised(episode_dir, trust_dir):
+    (trust_dir / "recorder.pub.hex").write_text("c0ffee")
+    assert verify_episode(episode_dir, trust_dir) == [f"UNREADABLE_TRUST_DIR({trust_dir})"]
+
+
 def test_a_record_bound_to_the_wrong_manifest_is_caught(tmp_path, trust_dir, secret_keys):
     from attest.recorder import start_episode
 

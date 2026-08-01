@@ -1,7 +1,7 @@
 {
   "content": [
     {
-      "id": "toolu_offline_lookup",
+      "id": "toolu_offline_lookup_account",
       "input": {
         "workspace_id": "NB-000123"
       },

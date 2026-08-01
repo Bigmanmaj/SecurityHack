@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from _corpus import load_corpus  # noqa: E402
+from _corpus import CORPUS_DIR, load_corpus  # noqa: E402
 from _offline_llm import build_llm  # noqa: E402
 from record_episode import FORBIDDEN_TOOLS, QUERY, make_key  # noqa: E402
 
@@ -34,6 +34,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--episode", default=str(ROOT / "episode"))
     parser.add_argument("--trust", default=str(ROOT / "trust"))
     parser.add_argument("--cache", default=str(ROOT / DEFAULT_CACHE_DIR))
+    parser.add_argument("--corpus", default=str(CORPUS_DIR),
+                        help="corpus directory the agent retrieves from")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--query", default=QUERY)
     parser.add_argument("--anchor-id", default="anchor-2")
@@ -65,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     manifest = Recorder.open(episode_dir).manifest
-    corpus = load_corpus()
+    corpus = load_corpus(args.corpus)
     # The manifest records the model that produced the episode; replaying under
     # any other model would not be a replay.
     llm, live = build_llm(args.model, args.cache, args.mode)

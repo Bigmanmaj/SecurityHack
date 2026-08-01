@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from _corpus import load_corpus  # noqa: E402
+from _corpus import CORPUS_DIR, load_corpus  # noqa: E402
 from _offline_llm import build_llm  # noqa: E402
 
 from flightrec import agent  # noqa: E402
@@ -45,6 +45,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--episode", default=str(ROOT / "episode"))
     parser.add_argument("--trust", default=str(ROOT / "trust"))
     parser.add_argument("--cache", default=str(ROOT / DEFAULT_CACHE_DIR))
+    parser.add_argument("--corpus", default=str(CORPUS_DIR),
+                        help="corpus directory the agent retrieves from")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--query", default=QUERY)
     parser.add_argument("--force", action="store_true", help="replace an existing episode")
@@ -77,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     anchor_key = make_key("anchor-1", args.demo_keys)
 
     llm, live = build_llm(args.model, args.cache, args.mode)
-    corpus = load_corpus()
+    corpus = load_corpus(args.corpus)
 
     manifest = build_manifest(
         agent_id=AGENT_ID,

@@ -1,27 +1,42 @@
 # AGENTS.md
 
-Conventions for working in this repo. Read `SPEC.md` first — it defines the
-bundle format and the pipeline.
+Conventions for working in this repo. Read `SPEC.md` first — it is normative
+and defines the bundle format.
 
 ## Layout
 
 ```
-src/flightrec/     library code (importable, no side effects on import)
+src/flightrec/     producer: records episodes and investigates them
+verifier/          independent verifier; implements SPEC.md from the text alone
 scripts/           entry points; anything prefixed with _ is a helper module
 tests/             pytest, offline only
 data/corpus/       the retrieval corpus (doc_07.md is deliberately poisoned)
-episode/           generated bundle (gitignored)
-trust/             generated public keys (gitignored)
-.cache/            LLM response cache (gitignored)
+episode_demo/      committed pre-investigation bundle used by scripts/demo.sh
+trust/             committed public keys for the demo bundle
+.cache/            committed warm LLM cache so the demo runs with no API key
+episode/           scratch output of record_episode.py (gitignored)
 ```
+
+## The one rule that matters
+
+**`verifier/` must not import `src/flightrec`, and vice versa.** Two
+implementations that share code prove nothing. The verifier is written from
+`SPEC.md` alone; it may use the standard library and `dilithium_py`. If the spec
+is too vague to reimplement something, fix the spec, never peek at the producer.
+`tests/test_verifier_canonical.py` asserts the isolation.
+
+Shared test vectors live in `tests/vectors.py`, which is a third transcription
+of the spec and imports neither side.
 
 ## Rules
 
-- **Hash and sign nothing but canonical bytes.** Use
-  `flightrec.canonical.canonical_bytes` and `H` / `sha3_256_hex`. Never
-  `json.dumps` something you are about to hash.
+- **Hash and sign nothing but canonical bytes.** Producer: `canonical_bytes` /
+  `H`. Verifier: `canon_bytes` / `h_hex`. Floats are rejected recursively.
 - **Records hold hashes, not content.** If you find yourself putting a document,
   a prompt, or a tool argument into a record payload, stop.
+- **`seq` is not signed.** Order and count are bound by the Merkle root in the
+  anchor. Do not "fix" this: a reordered bundle failing on the root and not on
+  the signatures is the point being demonstrated.
 - **Every LLM call goes through the cache.** Determinism of the ablation
   depends on it, and it keeps the demo instant and free. Temperature is 0.
 - **Tests never touch the network.** Use `FakeLLM`, or monkeypatch
@@ -32,16 +47,22 @@ trust/             generated public keys (gitignored)
 - **Replays must not pollute the bundle.** Use `NullRecorder` for ablation
   runs; the only thing an investigation writes to the real bundle is the
   attribution record and the new anchor.
-- Private keys live in memory for the length of a run and are never written to
-  disk. Only public keys go into `trust/`.
+- **Private keys stay in memory.** Only `trust/<key_id>.pub.hex` is written.
+  `--demo-keys` derives keys from fixed public seeds so the committed demo
+  bundle is byte-reproducible; it is never for real evidence.
+- **Committed demo assets are read-only at runtime.** `scripts/demo.sh` copies
+  `episode_demo/` to a working directory before touching it.
 
 ## Running
 
 ```bash
 pip install -r requirements.txt
-python scripts/record_episode.py     # produces episode/ + trust/
-python scripts/investigate.py        # appends signed attribution + anchor-2
-python scripts/verify_bundle.py      # independent verification
+
+python scripts/record_episode.py --force   # writes episode/ and trust/
+python scripts/investigate.py              # appends the attribution, anchor-2
+python verifier/verify_cli.py --episode episode --trust trust
+python scripts/tamper.py flip --episode episode --out /tmp/tampered
+bash scripts/demo.sh                       # the three-beat demo, no API key
 pytest -q
 ```
 
@@ -53,5 +74,5 @@ require the real API and fail loudly if the key is missing.
 
 ## Style
 
-Python 3.11+, standard library plus `anthropic` and `cryptography`. Type hints
-on public functions. Comments explain constraints, not mechanics.
+Python 3.11+, standard library plus `anthropic`, `dilithium-py`. Type hints on
+public functions. Comments explain constraints, not mechanics.

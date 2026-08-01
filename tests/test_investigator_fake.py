@@ -4,11 +4,10 @@ import pytest
 
 from flightrec import agent
 from flightrec.canonical import H, canonical_bytes
-from flightrec.crypto import SigningKey, write_trust_pubkeys
+from flightrec.crypto import SigningKey, verify_hex, write_trust_pubkeys
 from flightrec.investigator import METHOD, ablate, investigate, judge
 from flightrec.llm import FakeLLM, make_text_response, make_tool_use_response
-from flightrec.recorder import Recorder, build_manifest
-from flightrec.verify import verify_bundle
+from flightrec.recorder import Recorder, build_manifest, signed_message
 
 CORPUS = [
     ("doc_00", "Nimbus is a cloud file sync service for small teams."),
@@ -43,8 +42,7 @@ def record_episode(tmp_path):
     recorder_key = SigningKey.generate("recorder")
     anchor_key = SigningKey.generate("anchor-1")
     manifest = build_manifest(
-        "nimbus-support", "fake-model", FORBIDDEN, recorder_key.public_hex,
-        created_at="2024-01-01T00:00:00+00:00",
+        "nimbus-support", "fake-model", FORBIDDEN, created_at="2024-01-01T00:00:00+00:00"
     )
     recorder = Recorder(tmp_path / "episode", manifest, recorder_key)
     agent.run(QUERY, CORPUS, FakeLLM(susceptible_model), recorder, FORBIDDEN)
@@ -105,19 +103,24 @@ def test_investigate_signs_the_attribution_and_reanchors(tmp_path):
         "baseline_misbehaved": True,
         "flipped_on_ablation": True,
     }
-    assert investigation.record["signature"]["key_id"] == "investigator"
+    assert investigation.record["signer"] == "investigator"
+    assert verify_hex(
+        investigator_key.public_hex,
+        investigation.record["sig"],
+        signed_message(
+            "attribution",
+            investigation.record["payload"],
+            investigation.record["binding"],
+            "investigator",
+        ),
+    )
 
     # The replays add exactly one record to the bundle: the attribution.
-    assert Recorder.open(recorder.dir).next_seq == records_before + 1
-    assert (recorder.dir / "anchors" / "anchor-2.json").exists()
-
-    write_trust_pubkeys(
-        tmp_path / "trust",
-        {"investigator": investigator_key.public_hex, "anchor-2": anchor_2.public_hex},
-    )
-    report = verify_bundle(recorder.dir, tmp_path / "trust")
-    assert report.ok, report.failures
-    assert report.attributions[0]["culprit_chunk_hash"] == H(canonical_bytes(CORPUS[2][1]))
+    reopened = Recorder.open(recorder.dir)
+    assert reopened.record_count == records_before + 1
+    anchor_2_file = json.loads((recorder.dir / "anchors" / "anchor-2.json").read_text())
+    assert anchor_2_file["payload"]["record_count"] == records_before + 1
+    assert anchor_2_file["payload"]["merkle_root"] == reopened.merkle_root()
 
 
 def test_investigate_refuses_a_corpus_the_agent_did_not_see(tmp_path):

@@ -20,7 +20,11 @@ def _edit(episode_dir, relative, mutate):
 
 def edit_the_answer(episode_dir):
     """Change what the agent answered, leaving the claimed hash in place."""
-    _edit(episode_dir, ANSWER, lambda record: record["payload"].update(answer_hash=hash_payload("a nicer answer")))
+    _edit(
+        episode_dir,
+        ANSWER,
+        lambda record: record["payload"].update(answer_hash=hash_payload("a nicer answer")),
+    )
     return f"HASH_MISMATCH({ANSWER})"
 
 

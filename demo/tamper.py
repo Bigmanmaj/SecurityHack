@@ -76,7 +76,7 @@ def delete_the_attribution(episode_dir):
     return "COUNT_MISMATCH"
 
 
-@needs(None)
+@needs("anchor")
 def lie_about_the_root(episode_dir):
     """Point the anchor at a Merkle root of the attacker's choosing."""
     _edit(
@@ -86,7 +86,7 @@ def lie_about_the_root(episode_dir):
     return "BAD_ANCHOR(hash_mismatch)"
 
 
-@needs(None)
+@needs("anchor")
 def delete_the_anchor(episode_dir):
     """Throw the anchor away and hope the bundle passes unanchored."""
     _anchor(episode_dir).unlink()
@@ -111,9 +111,9 @@ TAMPERS = {
 def applicable_tampers(episode_dir):
     """Return the names of the tampers this particular bundle can be subjected to."""
     present = {read_record_file(path)["payload"]["type"] for path in record_paths(episode_dir)}
-    return sorted(
-        name for name, function in TAMPERS.items() if function.needs in present | {None}
-    )
+    if _anchor(episode_dir).is_file():
+        present.add("anchor")
+    return sorted(name for name, function in TAMPERS.items() if function.needs in present)
 
 
 def _edit(path, mutate):

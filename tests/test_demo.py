@@ -200,6 +200,15 @@ def test_applicable_tampers_skip_records_the_bundle_does_not_have(short_bundle, 
     assert applicable_tampers(episode_dir) == sorted(TAMPERS)
 
 
+def test_anchor_tampers_are_not_offered_once_the_anchor_is_gone(built):
+    episode_dir, _ = built
+    TAMPERS["delete_the_anchor"](episode_dir)
+    remaining = applicable_tampers(episode_dir)
+    assert "delete_the_anchor" not in remaining
+    assert "lie_about_the_root" not in remaining
+    assert "edit_the_answer" in remaining
+
+
 def test_main_builds_a_bundle_and_reports_green(tmp_path, capsys):
     exit_code = main(["--out", str(tmp_path / "run"), "--runs", "2"])
     output = capsys.readouterr().out

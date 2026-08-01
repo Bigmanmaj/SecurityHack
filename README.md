@@ -15,6 +15,9 @@ this README only explains it.
 ```bash
 pip install -r requirements.txt
 
+# the web app: type your own query and chunks, poison one, watch it get caught
+python web/server.py            # then open http://127.0.0.1:8000
+
 # verify the example bundle committed in this repo
 python verify_cli.py --episode examples/episode --trust examples/trust   # -> GREEN
 
@@ -70,6 +73,39 @@ make — each one named by the verifier:
 | delete the attribution | `COUNT_MISMATCH`, `ROOT_MISMATCH` |
 | lie about the Merkle root | `BAD_ANCHOR(hash_mismatch)` |
 | delete the anchor | `BAD_ANCHOR(missing)` |
+
+## The web app
+
+```bash
+python web/server.py            # http://127.0.0.1:8000, no npm needed
+```
+
+The page is the demo you can hand to someone else. On the left you type the
+question, the retrieved chunks — there is an **inject** button that drops a
+prompt injection into any chunk — the tools the manifest forbids, whether the
+model is injectable or hardened, and how many ablation runs to do. On the right,
+one run gives you the verifier's verdict and the literal command that produced
+it, the ablation matrix with the culprit chunk quoted back at you, the timeline
+of signed records with expandable payloads, and a row of buttons that tamper with
+the bundle on disk and re-run the verifier.
+
+Three things are worth pointing at when demonstrating it. The verifier runs as a
+real subprocess, so the terminal block is genuine `verify_cli.py` output, exit
+code included. The bundle is checked for leaks after every run — it reports how
+many of your input strings it looked for and how many it found, which is always
+zero. And poisoning two chunks instead of one produces *no* attribution rather
+than a guess, with the reason spelled out.
+
+The frontend is Vue 3 built with Vite, and the build output is committed to
+`web/static`, so judges need only Python. To work on it:
+
+```bash
+npm --prefix web/ui install
+npm --prefix web/ui run dev      # localhost:5173, proxies /api to :8000
+npm --prefix web/ui run build    # regenerates web/static
+```
+
+The Python side is `http.server` and `json` only — no web framework was added.
 
 ## Five scenarios, one process per party
 
@@ -202,10 +238,14 @@ demo/              corpus.py scripted_agent.py claude_agent.py tamper.py
                    run_demo.py run_scenarios.py
 demo/parties/      recorder.py anchor.py reviewer.py investigator.py
                    rogue_recorder.py — one process per party, one key each
+web/               server.py (stdlib http.server) service.py (sessions, tampers)
+web/ui/            Vue 3 + Vite source; builds into web/static (committed)
 tests/             one test module per unit, plus the end-to-end demo and examples
 examples/          a committed GREEN bundle
 SPEC.md            frozen contract    AGENTS.md  rules for working in this repo
 ```
 
-Dependencies are frozen to `anthropic`, `dilithium-py` and `pytest`; everything
-else is the standard library.
+Python dependencies are frozen to `anthropic`, `dilithium-py` and `pytest`;
+everything else, including the web server, is the standard library. The only
+other toolchain is npm for building the frontend, which is not needed to run
+anything because `web/static` is committed.

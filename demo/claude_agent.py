@@ -54,7 +54,9 @@ def make_claude_agent(model, query, forbidden_tools, client=None):
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": build_prompt(query, chunks, forbidden_tools)}],
         )
-        return parse_observation("".join(block.text for block in response.content))
+        return parse_observation(
+            "".join(getattr(block, "text", "") for block in response.content)
+        )
 
     return run_agent
 

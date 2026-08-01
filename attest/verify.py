@@ -5,11 +5,12 @@ the payload, the Merkle root is rebuilt from the recomputed hashes, and public
 keys come only from the verifier's own trust dir. Every failure gets a named
 reason; an empty reason list is GREEN.
 
-Two reasons go beyond the eight named in SPEC.md, for inputs the spec does not
+Three reasons go beyond the eight named in SPEC.md, for inputs the spec does not
 describe: MALFORMED_RECORD(file) when a record file is too broken to run the
-named checks against (unparseable, missing fields, a float in the payload), and
+named checks against (unparseable, missing fields, a float in the payload),
 WRONG_SIGNER(file) when a trusted key signs a record type it is not the signer
-for. Both only ever turn a bundle RED that could not have been GREEN anyway.
+for, and UNREADABLE_TRUST_DIR(dir) when there are no usable keys to check with.
+All three only ever turn a bundle RED that could not have been GREEN anyway.
 """
 
 import json
@@ -30,6 +31,7 @@ RECORD_SIGNERS = {
 }
 ANCHOR_SIGNERS = ("anchor-1", "anchor-2")
 ANCHOR_FIELDS = ("type", "chain_binding", "record_count", "merkle_root", "ts")
+CLAIM_FIELDS = ("payload_hash", "signature", "signer_id", "created_at")
 
 
 def verify_episode(episode_dir, trust_dir):
@@ -69,7 +71,7 @@ def _parse_record(path):
         return None
     if not isinstance(record, dict) or not isinstance(record.get("payload"), dict):
         return None
-    if any(not isinstance(record.get(field), str) for field in _CLAIM_FIELDS):
+    if any(not isinstance(record.get(field), str) for field in CLAIM_FIELDS):
         return None
     payload = record["payload"]
     if not isinstance(payload.get("seq"), int) or isinstance(payload.get("seq"), bool):
@@ -85,9 +87,6 @@ def _parse_record(path):
     except CanonicalizationError:
         return None
     return record
-
-
-_CLAIM_FIELDS = ("payload_hash", "signature", "signer_id", "created_at")
 
 
 def _manifest_hash(parsed):
@@ -160,7 +159,7 @@ def _parse_anchor(path):
         return None
     if not isinstance(anchor, dict) or not isinstance(anchor.get("payload"), dict):
         return None
-    if any(not isinstance(anchor.get(field), str) for field in _CLAIM_FIELDS):
+    if any(not isinstance(anchor.get(field), str) for field in CLAIM_FIELDS):
         return None
     payload = anchor["payload"]
     if payload.get("type") != "anchor" or any(field not in payload for field in ANCHOR_FIELDS):

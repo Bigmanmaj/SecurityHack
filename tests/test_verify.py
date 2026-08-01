@@ -368,6 +368,17 @@ def test_a_missing_episode_dir_is_never_green(tmp_path, trust_dir):
     assert verify_episode(tmp_path / "nowhere", trust_dir) != []
 
 
+@pytest.mark.parametrize("seq", [-1, 2**64, 2**70])
+def test_an_out_of_range_seq_is_reported_not_raised(episode_dir, trust_dir, secret_keys, seq):
+    def renumber(record):
+        record["payload"]["seq"] = seq
+        record["payload_hash"] = hash_payload(record["payload"])
+        record["signature"] = sign_payload(secret_keys["recorder"], record["payload"])
+
+    rewrite(episode_dir, ANSWER, renumber)
+    assert "SEQ_GAP_OR_DUP" in verify_episode(episode_dir, trust_dir)
+
+
 def test_reasons_are_deterministic(episode_dir, trust_dir):
     (episode_dir / TOOL_CALL).unlink()
     assert verify_episode(episode_dir, trust_dir) == verify_episode(episode_dir, trust_dir)

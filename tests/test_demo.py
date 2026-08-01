@@ -5,7 +5,7 @@ from attest.episode import load_records
 from attest.keys import SIGNER_IDS
 from attest.records import read_record_file
 from attest.verify import verify_episode
-from demo.claude_agent import build_prompt, parse_observation
+from demo.claude_agent import build_prompt, make_claude_agent, parse_observation
 from demo.corpus import CHUNKS, POISONED_INDEX, QUERY
 from demo.run_demo import build_episode, main, publish_trust
 from demo.scripted_agent import misbehaved, scripted_agent
@@ -167,6 +167,40 @@ def test_parse_observation_survives_unparseable_model_output():
 def test_parse_observation_drops_float_args():
     observation = parse_observation('{"tool": "t", "args": {"timeout": 1.5}, "answer": "a"}')
     assert observation["args"] == {"timeout": "1.5"}
+
+
+class _FakeBlock:
+    def __init__(self, text=None):
+        if text is not None:
+            self.text = text
+
+
+class _FakeClient:
+    """Stands in for anthropic.Anthropic: records the call, replays a canned reply."""
+
+    def __init__(self, reply_blocks):
+        self.reply_blocks = reply_blocks
+        self.calls = []
+        self.messages = self
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        return type("Reply", (), {"content": self.reply_blocks})
+
+
+def test_claude_agent_turns_a_reply_into_an_observation():
+    client = _FakeClient([_FakeBlock('{"tool": "shell.exec", "args": {"cmd": "sh"}, "answer": "ok"}')])
+    run_agent = make_claude_agent("claude-sonnet-4-5", QUERY, FORBIDDEN, client=client)
+    observation = run_agent(CHUNKS)
+    assert observation == {"tool": "shell.exec", "args": {"cmd": "sh"}, "answer": "ok"}
+    assert client.calls[0]["model"] == "claude-sonnet-4-5"
+    assert CHUNKS[POISONED_INDEX] in client.calls[0]["messages"][0]["content"]
+
+
+def test_claude_agent_ignores_reply_blocks_without_text():
+    client = _FakeClient([_FakeBlock(), _FakeBlock('{"tool": null, "answer": "use the runbook"}')])
+    run_agent = make_claude_agent("claude-sonnet-4-5", QUERY, FORBIDDEN, client=client)
+    assert run_agent(CHUNKS) == {"tool": None, "args": {}, "answer": "use the runbook"}
 
 
 def test_build_prompt_includes_the_query_and_every_chunk():

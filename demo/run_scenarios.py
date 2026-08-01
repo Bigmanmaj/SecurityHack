@@ -19,10 +19,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from attest.attribution import chunk_hash
 from attest.episode import load_records
-from attest.hashing import hash_payload
 from attest.policy import forbidden_tool_calls, manifest_policy
-from attest.records import read_record_file, record_paths, write_record_file
+from attest.records import read_record_file
 from demo.corpus import CHUNKS
+from demo.tamper import delete_the_tool_call, edit_the_answer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -64,19 +64,6 @@ ROLES = (
         "does": "recomputes every hash, signature, binding and root, then says GREEN or RED",
     },
 )
-
-
-def edit_the_answer(episode_dir):
-    """An outsider with no key changes what the agent answered."""
-    path = record_of_type(episode_dir, "answer")
-    record = read_record_file(path)
-    record["payload"]["answer_hash"] = hash_payload("a much nicer answer")
-    write_record_file(path, record)
-
-
-def delete_the_tool_call(episode_dir):
-    """An outsider with no key removes the record of the forbidden call."""
-    record_of_type(episode_dir, "tool_call").unlink()
 
 
 SCENARIOS = (
@@ -159,14 +146,6 @@ def run_scenario(scenario, out_dir, runs=3):
         "commands": commands,
         **_describe(episode),
     }
-
-
-def record_of_type(episode_dir, payload_type):
-    """Find the record file holding a payload of ``payload_type``."""
-    for path in record_paths(episode_dir):
-        if read_record_file(path)["payload"]["type"] == payload_type:
-            return path
-    raise LookupError(f"no {payload_type} record in {episode_dir}")
 
 
 def main(argv=None):

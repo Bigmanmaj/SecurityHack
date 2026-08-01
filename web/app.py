@@ -244,7 +244,10 @@ def state_payload():
 
 @app.get("/")
 def index():
-    return FileResponse(INDEX_HTML, media_type="text/html")
+    # no-store, because a demo that quietly serves yesterday's page is worse than
+    # one that fails loudly. The page is a few tens of kilobytes off localhost.
+    return FileResponse(INDEX_HTML, media_type="text/html",
+                        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 @app.get("/api/state")

@@ -272,15 +272,16 @@ let ablation = {retained:null, culprit:null, rounds:[]};
 
 const short = (h, n = 8) => h ? h.slice(0, n) : "—";
 
-// Paced rendering. The signing and the replays really are this fast, so without
-// pacing the whole of beat 1 lands in one frame and there is nothing to watch.
-// This delays *drawing*; every number drawn (sign_ms, scores, verdicts) is the
-// real one the server measured. Any keypress flushes the queue, so pacing can
-// never make the demo late.
+// Paced rendering. Signing and replaying really are this fast -- a whole beat
+// lands inside 400 ms -- so without pacing there is nothing to watch and nothing
+// to talk over. This delays *drawing* only; every number drawn (sign_ms, scores,
+// verdicts, exit codes) is the one the server measured. Pressing any demo key
+// flushes the queue, so pacing can never make the demo run long.
+const PACE = {record: 220, replay: 55, round: 650, chunks: 400, confirm: 700, verdict: 350};
 const paced = {q: [], timer: null};
 
 function pace(fn, ms) {
-  paced.q.push({fn, ms: ms == null ? 70 : ms});
+  paced.q.push({fn, ms: ms == null ? PACE.record : ms});
   schedulePaced();
 }
 
@@ -543,7 +544,7 @@ function runStream(url, name, handlers) {
   stream.addEventListener("done", ev => {
     stream.close(); stream = null;
     const state = JSON.parse(ev.data).state;
-    pace(() => { render(state); verify(); }, 120);
+    pace(() => { render(state); verify(); }, PACE.verdict);
   });
 }
 
@@ -592,21 +593,21 @@ function runInvestigate() {
     chunks: d => pace(() => {
       ablation.retained = d.chunks.map(c => c.doc_id + "#" + c.chunk_id);
       renderEpisode();
-    }, 250),
+    }, PACE.chunks),
     bisect_round: d => pace(() => {
       ablation.rounds.push(d);
       // Show the half the search is keeping, so the convergence is visible.
       ablation.retained = d.left_violation ? d.left
                         : (d.right_violation ? d.right : ablation.retained);
       renderEpisode();
-    }, 380),
-    confirm: d => pace(() => { ablation.retained = [d.key]; renderEpisode(); }, 380),
-    record: r => pace(() => pushRecord(r), 25),
+    }, PACE.round),
+    confirm: d => pace(() => { ablation.retained = [d.key]; renderEpisode(); }, PACE.confirm),
+    record: r => pace(() => pushRecord(r), PACE.replay),
     verdict: d => pace(() => {
       S.episode_view.finding = d.finding;
       ablation.retained = null;
       renderEpisode();
-    }, 200),
+    }, PACE.verdict),
   });
 }
 

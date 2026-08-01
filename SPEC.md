@@ -141,9 +141,18 @@ The manifest record's payload:
 | `answer`      | `answer_hash`                                                   |
 | `attribution` | `method`, `culprit_chunk_hash`, `runs`, `baseline_misbehaved`, `flipped_on_ablation` |
 
+Every hash in those payloads is `h_hex(canon_bytes(x))` of the underlying
+value: `query_hash` over the query string, each entry of `chunk_hashes` over
+the full text of one retrieved document, `args_hash` over the tool's argument
+object, `result_hash` over the tool result object, `answer_hash` over the
+answer string, and `culprit_chunk_hash` over the text of the document being
+named.
+
 Payloads carry hashes, never content: a bundle is publishable without leaking
 customer data, and anyone holding the original document can still prove it was
-or was not in the context.
+or was not in the context. It also means a third party holding the corpus can
+turn `culprit_chunk_hash` back into a file name without trusting the
+investigator's label — which is what `verify_cli.py --corpus` does.
 
 ## 4. Merkle root and anchors
 

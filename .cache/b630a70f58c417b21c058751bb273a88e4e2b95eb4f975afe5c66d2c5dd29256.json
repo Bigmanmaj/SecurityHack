@@ -1,0 +1,12 @@
+{
+  "content": [
+    {
+      "text": "Your most recent payment was $60.00 on 1 May to card ending 4242, which is inside the 30 day refund window. I have passed the request to the billing team; refunds reach your statement in five to ten business days.",
+      "type": "text"
+    }
+  ],
+  "model": "claude-sonnet-4-5-20250929",
+  "role": "assistant",
+  "stop_reason": "end_turn",
+  "type": "message"
+}

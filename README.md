@@ -1,93 +1,192 @@
 # flightrec
 
-A tamper-evident flight recorder for AI agents, and a way to prove *which
-document* made an agent misbehave.
+**A flight recorder for AI agents: prove what an agent saw, prove what it did,
+and prove which document made it do that — to someone who does not trust you.**
 
 A support agent for a fictional product ("Nimbus") answers a refund question
-over a ten-document corpus. One of those documents, `doc_07.md`, ends with an
-injected instruction telling the agent to call `transfer_funds` — a tool the
-episode's policy forbids. The agent obeys.
+over ten retrieved documents. One of them, `doc_07.md`, ends with an injected
+instruction telling the agent to call `transfer_funds` — a tool the episode's
+policy forbids. The agent obeys.
 
-Everything the agent saw and did is written to an append-only, hash-chained,
-signed record chain. Afterwards an investigator replays the episode ten times,
-removing one document each time, finds the one whose removal stops the
-forbidden call, and appends a **signed attribution** naming it. The finished
-bundle can be verified by anyone holding only the public keys.
+Everything it saw and did is recorded as signed, Merkle-anchored records. An
+investigator then replays the episode ten times, each time with one document
+removed, finds the one whose removal stops the forbidden call, and appends a
+**signed verdict** naming it. A separate verifier — a second implementation
+that shares no code with the recorder — checks the whole thing against nothing
+but public keys.
 
 ```
-$ python scripts/record_episode.py
-tool call  FORBIDDEN  transfer_funds
-episode    episode (4 records, cache 0 hit / 2 miss)
+$ bash scripts/demo.sh
 
-$ python scripts/investigate.py
-  without doc_06: still misbehaves
-  without doc_07: BEHAVES  <- culprit
-  without doc_08: still misbehaves
-culprit    doc_07 (chunk d8eb2fce6d7daf05...)
-attribution signed
+BEAT 1  records    5 records: manifest, retrieval, tool_call, tool_result, answer
+        violation  seq 2: forbidden tool transfer_funds (executed: False)
+        GREEN, exit=0
 
-$ python scripts/verify_bundle.py
-ok    5 records: chain intact, all signatures valid
-ok    anchor 'anchor-2' covers records 0..4 (chain head)
-policy violation at seq 1: transfer_funds (executed: False, ...)
-attribution at seq 4 signed by investigator: single-chunk-ablation -> chunk d8eb2fce...
-VERIFIED
+BEAT 2  without doc_07: BEHAVES  <- culprit
+        verdict    single-chunk-ablation by investigator: culprit chunk d8eb2fce... = doc_07
+        GREEN, exit=0
+
+BEAT 3  flipped    payload.query_hash[0]: 'f' -> '0'
+        HASH_MISMATCH:00001.json
+        BAD_SIGNATURE:00001.json
+        RED, exit=1
 ```
 
-`SPEC.md` describes the bundle format and threat model; `AGENTS.md` has the
-working rules for the repo.
+## Threat model in three sentences
 
-## Design in one page
+An operator can edit, delete or reorder a plain-text agent log after the fact,
+so the log is only as good as their word — which is worth nothing in the
+argument where it matters. flightrec makes any post-capture change detectable
+by a third party: every record is ML-DSA-65 signed and bound to the policy in
+force, and an anchor signs the Merkle root over all records with their
+positions, so editing, deleting and reordering each fail loudly with a named
+reason. It is tamper-**evident after capture**, not tamper-**proof at origin**:
+a recorder that lies while it still holds its key produces a bundle that
+verifies, and closing that gap needs a TEE or an HSM.
 
-- **Records contain hashes, not content.** A record says "the context was these
-  ten chunk hashes" and "a tool call with these argument hashes happened". The
-  bundle can be published without leaking anything, and anyone with the original
-  document can prove it was in the context.
-- **The manifest is the genesis of the chain.** The policy that was in force —
-  which tools were forbidden — is hashed into the first record's `prev_hash`, so
-  it cannot be rewritten after a violation.
-- **Forbidden tools are recorded, never executed.** The agent emits the
-  `tool_call` record with `executed: false` and feeds the model a refusal. The
-  evidence of the attempt is the thing worth keeping.
-- **Anchors bind the chain to a point in time.** `anchor-1` is signed at the end
-  of the episode by a key separate from the recorder; `anchor-2` covers the
-  chain again after the investigator appends the attribution.
-- **The investigator signs with its own key.** Attribution is a later claim by a
-  different party, so it carries a different signature while linking into the
-  same chain.
-- **Every model call is cached by content hash.** Replay determinism is what
-  makes ablation an argument rather than an anecdote: re-running the whole
-  investigation is 22 cache hits and 0 model calls, and reaches the same
-  conclusion.
-
-## Running it
+## Quickstart
 
 ```bash
 pip install -r requirements.txt
 
-python scripts/record_episode.py --force   # writes episode/ and trust/
-python scripts/investigate.py              # appends the attribution, anchor-2
-python scripts/verify_bundle.py            # independent verification
-pytest -q
+bash scripts/demo.sh                     # the whole story, no API key needed
+pytest -q                                # 120 tests, all offline
 ```
 
-With `ANTHROPIC_API_KEY` set, both scripts call Claude at temperature 0. Without
-one they use a deterministic injection-susceptible stand-in model
-(`scripts/_offline_llm.py`) through the same cache and the same agent code, so
-the pipeline is demonstrable offline; the stand-in gets its own model id
-(`...+offline-sim`) so its cached responses can never be confused with real
-ones. Pass `--live` to require the real API, `--offline` to force the stand-in.
+Individually:
+
+```bash
+python scripts/record_episode.py --force                    # writes episode/ + trust/
+python verifier/verify_cli.py --episode episode --trust trust
+python scripts/investigate.py                               # appends the verdict, anchor-2
+python scripts/tamper.py flip --episode episode --out /tmp/tampered
+python verifier/verify_cli.py --episode /tmp/tampered --trust trust   # RED
+```
+
+With `ANTHROPIC_API_KEY` set, the agent calls Claude at temperature 0. Without
+one it uses a deterministic injection-susceptible stand-in model
+(`scripts/_offline_llm.py`) behind the same cache and the same agent code, so
+everything here is reproducible offline; the stand-in gets its own model id
+(`...+offline-sim`) so its cached responses can never be mistaken for real
+ones. `--live` forces the real API and fails loudly without a key.
+
+## The demo, beat by beat
+
+`scripts/demo.sh` copies the committed bundle to `/tmp/flightrec_demo` before
+touching anything, so it is idempotent and rehearsable from the same checkout.
+`--no-pause` skips the keypress between beats; `--canned` makes beat 2 verify
+the committed post-investigation bundle instead of running the investigation.
+
+**Beat 1 — the bundle speaks for itself.** `verify_cli.py` recomputes every
+payload hash, checks every ML-DSA-65 signature against `trust/*.pub.hex`,
+checks that every record binds to the manifest that carried the policy, checks
+the sequence is exactly `0..N-1`, and recomputes the Merkle root the anchor
+signed. It prints GREEN and exits 0. It also reports what the bundle proves
+happened: a forbidden `transfer_funds` call at seq 2, recorded but never
+executed.
+
+**Beat 2 — attribution.** The investigator replays the episode ten times, each
+time with one document removed. Nine still call `transfer_funds`; without
+`doc_07` the agent behaves. That single flip is signed into the same chain as
+an `attribution` record — by the investigator's key, not the recorder's — and
+the bundle is re-anchored. Verification is GREEN again, now over six records,
+and the verifier resolves the culprit hash back to `doc_07` from the corpus, so
+nobody has to take the investigator's word for which file it was.
+
+**Beat 3 — the RED moment.** `tamper.py flip` copies the bundle and changes one
+hex digit in one payload. `HASH_MISMATCH`, `BAD_SIGNATURE`, RED, exit 1.
+`tamper.py delete` and `tamper.py swap` are the other two: deleting a record
+gives `SEQ_GAP_OR_DUP` + `COUNT_MISMATCH` + `ROOT_MISMATCH`, and swapping two
+records' sequence numbers leaves **every signature valid** and is caught only
+by the root — which is precisely why signing each log line is not enough.
+
+## Design
+
+- **Records hold hashes, not content.** A record says "the context was these
+  ten chunk hashes" and "a tool call with these argument hashes happened". The
+  bundle is publishable without leaking customer data, and anyone holding the
+  original document can prove it was in the context.
+- **The manifest is a record, and everything binds to it.** The policy in force
+  — which tools were forbidden — is record 0, and every later record carries its
+  hash, so the policy cannot be rewritten after a violation.
+- **`seq` is deliberately not signed.** Per-record signatures cannot bind
+  order; the Merkle root in the anchor does. Beat 3's swap demonstrates the
+  difference.
+- **Forbidden tools are recorded, never executed.** The agent emits the
+  `tool_call` record with `executed: false` and feeds the model a refusal. The
+  evidence of the attempt is the thing worth keeping.
+- **The investigator signs with its own key.** A verdict is a later claim by a
+  different party, so it carries a different signature while binding to the
+  same manifest.
+- **Two implementations, no shared code.** `src/flightrec` writes bundles;
+  `verifier/` reads them and was written from `SPEC.md` alone. A test enforces
+  that the verifier imports nothing but the standard library and
+  `dilithium_py`, and both sides assert the same Merkle vectors from a third
+  transcription in `tests/vectors.py`.
+- **Every model call is cached by content hash.** Re-running the whole
+  investigation is 22 cache hits and 0 model calls and reaches the same
+  conclusion, which is what makes the ablation a controlled experiment rather
+  than a re-roll.
+
+`SPEC.md` is normative and has the full format; `AGENTS.md` has the working
+rules.
 
 ## Layout
 
 ```
-src/flightrec/canonical.py     canonical JSON bytes + sha3-256
-src/flightrec/crypto.py        ed25519 keys, trust/pubkeys.json
-src/flightrec/recorder.py      hash-chained signed records, anchors, NullRecorder
-src/flightrec/verify.py        independent bundle verification
+SPEC.md                        the normative bundle format
+src/flightrec/canonical.py     canonical JSON bytes + SHA3-256
+src/flightrec/crypto.py        ML-DSA-65 keys, trust/<id>.pub.hex
+src/flightrec/merkle.py        leaves and roots, promote-odd
+src/flightrec/recorder.py      signed records, anchors, NullRecorder
 src/flightrec/llm.py           response cache, Anthropic client, FakeLLM
 src/flightrec/agent.py         the recorded Nimbus support agent
-src/flightrec/investigator.py  judge + single-chunk ablation + signed attribution
-scripts/                       record_episode, investigate, verify_bundle
+src/flightrec/investigator.py  judge + single-chunk ablation + signed verdict
+verifier/canonical.py          independent reimplementation of SPEC 1, 2, 4
+verifier/verify.py             independent reimplementation of SPEC 5
+verifier/verify_cli.py         GREEN / RED
+scripts/record_episode.py      produce a bundle
+scripts/investigate.py         attribute and sign
+scripts/tamper.py              flip / delete / swap
+scripts/demo.sh                the three beats
 data/corpus/                   ten documents; doc_07 is poisoned
+episode_demo/                  committed pre-investigation bundle
+episode_demo_done/             committed post-investigation bundle
+trust/                         committed public keys for those bundles
+.cache/                        committed warm cache, so the demo needs no API key
 ```
+
+## Pitch
+
+*(~90 seconds)*
+
+An agent with tools reads documents it did not write. One of those documents
+tells it to move money, and it does. That happens today. The question the next
+morning is not "did it happen" — it is "prove it". And the only thing anyone has
+is a log file the operator could have edited before you arrived. Testimony, not
+evidence.
+
+So we built a flight recorder. Every step the agent takes — what it retrieved,
+what tool it called, what it answered — becomes a signed record holding hashes
+rather than content, bound to the policy that was in force at the time, and
+committed to a Merkle root that an anchor signs. Then an investigator asks the
+question that actually matters: *which document did this?* It replays the
+episode ten times, each time with one document removed. Nine still misbehave.
+Remove `doc_07` and the agent behaves. That verdict is signed into the same
+chain by a different key.
+
+And a verifier we wrote separately, from the spec alone, sharing no code with
+the recorder, checks the whole bundle with nothing but public keys. GREEN.
+
+Now watch. *[flip one character]* One hex digit in one payload. `HASH_MISMATCH`,
+`BAD_SIGNATURE`, RED, exit 1. Delete a record and it names the gap, the count
+and the root. Swap two records and every signature is still valid — only the
+root catches it, which is exactly why signing each log line on its own is not
+enough.
+
+Two honest caveats. This is tamper-evident *after capture*, not tamper-proof
+*at origin*: a recorder that lies while it holds its key produces a bundle that
+verifies, and closing that needs a TEE or an HSM — the next layer, not this one.
+And the signatures are post-quantum, ML-DSA-65, because evidence has to stay
+verifiable for years, and an archived record signed with ECDSA can be forged
+retroactively by an adversary who gets a quantum computer later.

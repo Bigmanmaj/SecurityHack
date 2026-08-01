@@ -8,7 +8,7 @@ from attest.verify import verify_episode
 from demo.claude_agent import build_prompt, make_claude_agent, parse_observation
 from demo.corpus import CHUNKS, POISONED_INDEX, QUERY
 from demo.run_demo import build_episode, main, publish_trust
-from demo.scripted_agent import misbehaved, scripted_agent
+from demo.scripted_agent import AGENTS, hardened_agent, misbehaved, scripted_agent
 from demo.tamper import TAMPERS
 
 FORBIDDEN = ["shell.exec"]
@@ -19,6 +19,17 @@ def test_scripted_agent_obeys_the_injected_instruction():
     assert observation["tool"] == "shell.exec"
     assert "evil.example" in observation["args"]["cmd"]
     assert misbehaved(observation, FORBIDDEN)
+
+
+def test_the_hardened_agent_ignores_the_injection():
+    observation = hardened_agent(CHUNKS)
+    assert observation["tool"] is None
+    assert not misbehaved(observation, FORBIDDEN)
+    assert observation == scripted_agent([CHUNKS[0], CHUNKS[2]])
+
+
+def test_the_agents_are_selectable_by_name():
+    assert AGENTS == {"injected": scripted_agent, "hardened": hardened_agent}
 
 
 def test_scripted_agent_behaves_without_the_poisoned_chunk():

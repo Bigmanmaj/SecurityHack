@@ -21,6 +21,9 @@ python verify_cli.py --episode examples/episode --trust examples/trust   # -> GR
 # build a fresh bundle, then show what tampering costs
 python demo/run_demo.py --out out/demo --tamper
 
+# five scenarios, each party in its own process
+python demo/run_scenarios.py --out out/scenarios
+
 # with a real model instead of the scripted stand-in
 ANTHROPIC_API_KEY=... python demo/run_demo.py --out out/live --live --model claude-sonnet-4-5
 
@@ -67,6 +70,48 @@ make — each one named by the verifier:
 | delete the attribution | `COUNT_MISMATCH`, `ROOT_MISMATCH` |
 | lie about the Merkle root | `BAD_ANCHOR(hash_mismatch)` |
 | delete the anchor | `BAD_ANCHOR(missing)` |
+
+## Five scenarios, one process per party
+
+`demo/run_scenarios.py` is the version to run if you want to see the whole design
+argued rather than one happy path. It starts by naming the six parties and what
+each one holds, then runs five scenarios, each party as its own process:
+
+| scenario | verdict |
+| --- | --- |
+| behaving agent — ignores the injection, 3 records | `GREEN` |
+| misbehaving agent — obeys it, investigated, 5 records | `GREEN` |
+| behaving agent, then an outsider edits the answer | `RED` |
+| misbehaving agent, then an outsider deletes the tool call | `RED` |
+| rogue recorder relabels its own forbidden call after anchoring | `RED` |
+
+Each party is a script in `demo/parties/` that generates its own keypair,
+publishes the public half, does its one job, and exits — so a private key never
+crosses a process boundary, and you can see from the code that the recorder never
+holds an anchor key. The reviewer and the verifier hold no signing key at all.
+
+The last two scenarios are the interesting ones. Deleting the tool call hides the
+forbidden call from a *reviewer* — reading the tampered bundle afterwards shows
+nothing suspicious — while the verifier still reports `SEQ_GAP_OR_DUP`,
+`COUNT_MISMATCH` and `ROOT_MISMATCH`. And the rogue recorder relabels
+`shell.exec` as `docs.search` and re-signs it flawlessly, since it does own the
+recorder key: no `HASH_MISMATCH`, no `BAD_SIGNATURE`, a reviewer sees a clean
+episode, and the only thing that gives it away is the root anchor-1 already
+committed to:
+
+```
+== rogue_recorder ==
+  $ python3 demo/parties/rogue_recorder.py
+  records now on disk: manifest, retrieval, tool_call, answer
+  a reviewer reading it now would see: nothing
+  the anchor is signed by anchor-1 and claims 4 records
+  ROOT_MISMATCH
+  verifier: RED (expected RED)
+```
+
+That is the argument for holding the anchor keys somewhere other than the
+recorder. The runner exits 0 only if all five scenarios reached their expected
+verdict, so it doubles as an end-to-end self-test.
 
 ## The bundle
 
@@ -153,7 +198,10 @@ attest/            canonical.py hashing.py keys.py payloads.py records.py
                    merkle.py episode.py recorder.py anchoring.py
                    attribution.py policy.py verify.py
 verify_cli.py      the verifier CLI
-demo/              corpus.py scripted_agent.py claude_agent.py tamper.py run_demo.py
+demo/              corpus.py scripted_agent.py claude_agent.py tamper.py
+                   run_demo.py run_scenarios.py
+demo/parties/      recorder.py anchor.py reviewer.py investigator.py
+                   rogue_recorder.py — one process per party, one key each
 tests/             one test module per unit, plus the end-to-end demo and examples
 examples/          a committed GREEN bundle
 SPEC.md            frozen contract    AGENTS.md  rules for working in this repo

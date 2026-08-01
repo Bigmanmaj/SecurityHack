@@ -136,6 +136,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         sub.add_argument("--out", required=True, help="where to write the tampered copy")
         sub.add_argument("--seq", type=int, help="which record to touch (default: chosen for you)")
         sub.add_argument("--force", action="store_true", help="replace --out if it exists")
+        sub.add_argument(
+            "--no-expect",
+            action="store_true",
+            help="do not print the failures we expect; let the verifier speak first",
+        )
     return parser.parse_args(argv)
 
 
@@ -145,9 +150,10 @@ def main(argv: list[str] | None = None) -> int:
 
     expected = ACTIONS[args.action](out, args.seq)
 
-    print()
-    print(f"expect     {', '.join(expected)} from the verifier")
-    print(f"           python verifier/verify_cli.py --episode {out} --trust trust")
+    if not args.no_expect:
+        print()
+        print(f"expect     {', '.join(expected)} from the verifier")
+        print(f"           python verifier/verify_cli.py --episode {out} --trust trust")
     return 0
 
 

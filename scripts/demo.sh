@@ -71,7 +71,8 @@ verify "$WORK"
 pause
 
 rule "BEAT 3 — now let us tamper with it"
-"$PYTHON" scripts/tamper.py flip --episode "$WORK" --out "$TAMPERED" --force
+# --no-expect: the verifier says what is wrong, we do not announce it first.
+"$PYTHON" scripts/tamper.py flip --episode "$WORK" --out "$TAMPERED" --force --no-expect
 echo
 verify "$TAMPERED"
 

@@ -26,7 +26,7 @@ key ratchet** — *the key that signed record 7 was erased before record 8 exist
 ```bash
 pip install -e ".[dev]"     # one runtime dependency: dilithium-py (pure Python)
 make demo                   # three beats, hermetic, no network
-make test                   # 108 tests, including the full tamper matrix
+make test                   # 113 tests, including the full tamper matrix
 ```
 
 Three verbs, nothing else:
@@ -46,8 +46,37 @@ python -m investigator.cli episode/                      # investigate + sign fi
 | **Adversary** | The operator of the agent system — full root on the box, full write access to the log directory, holds whatever keys the recorder holds *now*. |
 | **Goal** | Rewrite history after the fact: make an unauthorized tool call disappear, blame a different input, or produce a clean chain. |
 | **We defend** | Retroactive rewriting of any record committed *before* the adversary's compromise. Deletion, insertion, reordering, tail truncation, and cross-episode splicing. |
-| **We do NOT defend** | An adversary who controls the recorder *at recording time* and lies about what happened (garbage in). Nor forgery of *future* records after key compromise. This is the honest boundary, and it is the same boundary as an aircraft flight data recorder. |
+| **We do NOT defend** | An adversary who controls the recorder *at recording time* and lies about what happened (garbage in). Nor forgery of *future* records after key compromise. Nor, without an external witness, wholesale substitution or truncation back to an earlier SEAL — see below. This is the honest boundary, and it is the same boundary as an aircraft flight data recorder. |
 | **Why post-quantum** | Forensic artifacts must stay non-repudiable for years. A signature scheme broken in 2032 retroactively voids every 2026 record it protected — the evidence turns back into testimony. This is a *durability of proof* argument, not a "harvest now, decrypt later" one; the latter does not apply to signatures at all. |
+
+### What one 32-byte anchor can and cannot prove
+
+`anchor.pub` lives in the directory the operator controls. On its own it proves the
+chain is *internally* consistent — nothing inside was edited, deleted, reordered, or
+re-signed. It cannot prove *identity* or *completeness*, and pretending otherwise
+would be the same hand-wave this project exists to reject. Two attacks survive a
+bare `verify_episode.py episode/`:
+
+- **Wholesale substitution** — regenerate the episode from a fresh seed and rewrite
+  `anchor.pub`. The result verifies against itself.
+- **Truncation back to an earlier SEAL** — delete the whole investigation. The
+  agent's original SEAL is now file-final and its `count` matches the files left, so
+  both anti-truncation defenses are satisfied.
+
+Both are closed by one line of state held where the operator cannot reach it:
+
+```bash
+python demo/publish_witness.py episode/ > somewhere-the-operator-cannot-edit
+python verify_episode.py episode/ --anchor <hex> --head <hex> --count 33
+```
+
+`episodes/golden.witness` is the committed example, and a test checks the golden
+episode against it.
+
+Both attacks are asserted in `tests/test_tamper_matrix.py` rather than left for
+someone to find. This is precisely why external anchoring — publishing periodic head
+hashes to a transparency log or a git commit outside the operator's control — is the
+highest-value extension rather than a nice-to-have.
 
 ---
 
@@ -83,10 +112,12 @@ Four components with hard boundaries:
 - **`fr/`** — canonicalization, hashing, ratchet, append, seal. Knows nothing about agents.
 - **`agent/`** — RAG agent over the doc corpus, emits events through the recorder. Knows nothing about crypto.
 - **`investigator/`** — reads a *verified* episode, replays with ablations, writes a finding through the recorder.
-- **`verify_episode.py`** — standalone and dependency-minimal (293 lines of code, 365 with
-  comments and whitespace). It imports nothing from `fr/`; it is an independent
-  reimplementation of the format, which is itself a feature — two implementations
-  that must agree byte-for-byte turn spec ambiguity into a test failure.
+- **`verify_episode.py`** — standalone and dependency-minimal: 312 lines of code, 391
+  including comments and whitespace. (The design target was under 300; the external
+  witness support below cost the extra dozen, which was worth it.) It imports nothing
+  from `fr/`; it is an independent reimplementation of the format, which is itself a
+  feature — two implementations that must agree byte-for-byte turn spec ambiguity into
+  a test failure rather than a courtroom argument.
 
 ---
 
@@ -189,8 +220,8 @@ the file path, and the two conflicting values. "It failed" is not a demo.
 | `SEQUENCE_GAP` | a record file deleted from the middle |
 | `DUPLICATE_SEQ` | two records claiming the same seq |
 | `RATCHET_MISMATCH` | `sig.pk` not the key committed by the previous record |
-| `ANCHOR_MISMATCH` | record 0's pk does not match `anchor.pub` |
-| `TRUNCATED_TAIL` | final record is not a `SEAL`, or SEAL `count` ≠ records present |
+| `ANCHOR_MISMATCH` | record 0's pk does not match `anchor.pub`, or `anchor.pub` does not match `--anchor` |
+| `TRUNCATED_TAIL` | final record is not a `SEAL`, SEAL `count` ≠ records present, or the head/count disagrees with `--head`/`--count` |
 | `SEAL_MISPLACED` | intermediate SEAL not followed by a matching `INVESTIGATION_OPEN` |
 | `EPISODE_MISMATCH` | `episode` id differs between records |
 | `TIMESTAMP_REGRESSION` | `ts_ns` goes backwards |
@@ -281,8 +312,9 @@ one file to swap.
 
 ## Not built (deliberately)
 
-Hybrid Ed25519 ‖ ML-DSA signatures, external anchoring to a transparency log,
-Merkle inclusion proofs, ML-KEM-encrypted blobs, and an OpenTelemetry exporter are
-all natural extensions. External anchoring is the highest-value one: it is what
-would close the remaining gap in the threat model for *future* records, not just
-past ones.
+Hybrid Ed25519 ‖ ML-DSA signatures, automated external anchoring to a transparency
+log, Merkle inclusion proofs, ML-KEM-encrypted blobs, and an OpenTelemetry exporter
+are all natural extensions. External anchoring is the highest-value one: the
+`--anchor`/`--head`/`--count` witness flags are the manual version of it, and
+automating the publication is what would close the remaining gap in the threat model
+for *future* records, not just past ones.

@@ -194,6 +194,19 @@ def test_the_committed_golden_episode_still_verifies():
     )
 
 
+def test_the_golden_episode_matches_its_published_witness():
+    """The committed witness is only worth anything if it is actually checked."""
+    witness = {}
+    with open(os.path.join(REPO, "episodes", "golden.witness"), encoding="utf-8") as fh:
+        for line in fh:
+            if line.strip() and not line.startswith("#"):
+                key, value = line.split()
+                witness[key] = value
+    verify_episode.verify(os.path.join(REPO, "episodes", "golden"),
+                          expect_anchor=witness["anchor"], expect_head=witness["head"],
+                          expect_count=int(witness["count"]))
+
+
 def test_the_cli_surface_is_three_verbs(tmp_path):
     root = str(tmp_path / "cli")
     record = subprocess.run([sys.executable, "-m", "agent.rag", "--scenario", "poisoned",

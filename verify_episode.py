@@ -10,6 +10,10 @@ This deliberately imports nothing from ``fr/``. It is an independent
 reimplementation of the record format, which is itself a feature: two
 implementations that must agree byte-for-byte turn spec ambiguity into a test
 failure instead of a courtroom argument.
+
+Pass ``--anchor``/``--head``/``--count`` to check against values published where
+the operator cannot reach them; without a witness this proves that the chain is
+internally consistent, not that it is the right chain or a complete one.
 """
 
 import argparse
@@ -154,32 +158,30 @@ def check_sig_block(sig):
 
 def check_blobs(payload, root):
     """Large payloads live out of line, referenced by hash. Re-hash every one."""
+    def bad(detail, expected, got):
+        return Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin {detail}", expected=expected, got=got)
+
     stack = [payload]
     while stack:
         node = stack.pop()
         if isinstance(node, list):
             stack.extend(node)
-            continue
-        if not isinstance(node, dict):
-            continue
-        stack.extend(node.values())
-        digest = node.get("blob_sha3")
-        if not isinstance(digest, str):
-            continue
-        if not hex64(digest):
-            raise Fail("SCHEMA_INVALID", "blob_sha3 must be 64 lowercase hex characters")
-        path = os.path.join(root, "blobs", digest + ".bin")
-        if not os.path.exists(path):
-            raise Fail("BLOB_HASH_MISMATCH", f"referenced blob is missing: blobs/{digest}.bin",
-                       expected=digest, got="<absent>")
-        with open(path, "rb") as fh:
-            data = fh.read()
-        if sha3(data) != digest:
-            raise Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin content was swapped",
-                       expected=digest, got=sha3(data))
-        if "blob_len" in node and node["blob_len"] != len(data):
-            raise Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin length changed",
-                       expected=node["blob_len"], got=len(data))
+        elif isinstance(node, dict):
+            stack.extend(node.values())
+            digest = node.get("blob_sha3")
+            if not isinstance(digest, str):
+                continue
+            if not hex64(digest):
+                raise Fail("SCHEMA_INVALID", "blob_sha3 must be 64 lowercase hex characters")
+            path = os.path.join(root, "blobs", digest + ".bin")
+            if not os.path.exists(path):
+                raise bad("is missing", digest, "<absent>")
+            with open(path, "rb") as fh:
+                data = fh.read()
+            if sha3(data) != digest:
+                raise bad("content was swapped", digest, sha3(data))
+            if "blob_len" in node and node["blob_len"] != len(data):
+                raise bad("length changed", node["blob_len"], len(data))
 
 
 def committed_hash(records_dir, files, index):
@@ -195,8 +197,14 @@ def committed_hash(records_dir, files, index):
 
 # --- the walk
 
-def verify(root):
-    """Return a summary dict, or raise Fail with a named reason code."""
+def verify(root, expect_anchor=None, expect_head=None, expect_count=None):
+    """Return a summary dict, or raise Fail with a named reason code.
+
+    The expect_* arguments are optional external witness values: an anchor closes
+    wholesale substitution, and a head or count closes truncation back to an
+    earlier SEAL, which otherwise leaves a chain that is internally perfect and
+    simply shorter than it should be.
+    """
     anchor_path = os.path.join(root, "anchor.pub")
     if not os.path.isfile(anchor_path):
         raise Fail("ANCHOR_MISMATCH", "anchor.pub is missing: there is no trust input",
@@ -206,6 +214,9 @@ def verify(root):
     if not hex64(anchor):
         raise Fail("ANCHOR_MISMATCH", "anchor.pub is not 64 lowercase hex characters",
                    path=anchor_path)
+    if expect_anchor and anchor != expect_anchor.strip():
+        raise Fail("ANCHOR_MISMATCH", "anchor.pub is not the published anchor for this episode",
+                   path=anchor_path, expected=expect_anchor.strip(), got=anchor)
 
     records_dir = os.path.join(root, "records")
     files = sorted(f for f in os.listdir(records_dir)
@@ -309,6 +320,14 @@ def verify(root):
         raise Fail("TRUNCATED_TAIL", "SEAL count disagrees with the number of record files",
                    seq=last["seq"], path=last_path,
                    expected=last["payload"]["count"], got=len(files))
+    # Chopping back to an earlier SEAL leaves a chain that is internally perfect.
+    # Only a witness held outside the operator's reach can catch that.
+    if expect_count is not None and len(files) != int(expect_count):
+        raise Fail("TRUNCATED_TAIL", "fewer records than the published count: the tail was chopped",
+                   seq=last["seq"], path=last_path, expected=int(expect_count), got=len(files))
+    if expect_head and prev_hash != expect_head.strip():
+        raise Fail("TRUNCATED_TAIL", "head hash is not the published head for this episode",
+                   seq=last["seq"], path=last_path, expected=expect_head.strip(), got=prev_hash)
     return {"episode": episode, "count": len(files), "head_hash": prev_hash, "anchor": anchor,
             "seals": [b["seq"] for b in bodies if b["type"] == "SEAL"],
             "types": [b["type"] for b in bodies], "bodies": bodies}
@@ -331,11 +350,17 @@ def main(argv=None):
     ap.add_argument("--dump", action="store_true", help="print seq/type/prev for every record")
     ap.add_argument("--quiet", action="store_true", help="print only GREEN or the RED reason")
     ap.add_argument("--no-color", action="store_true")
+    # Witness values are published where the operator cannot reach them. Without
+    # one, this proves internal consistency, not identity or completeness.
+    ap.add_argument("--anchor", help="the anchor this episode was published under")
+    ap.add_argument("--head", help="the head hash last published for this episode")
+    ap.add_argument("--count", type=int, help="the record count last published")
     args = ap.parse_args(argv)
     color = not args.no_color and sys.stdout.isatty()
 
     try:
-        summary = verify(args.episode)
+        summary = verify(args.episode, expect_anchor=args.anchor, expect_head=args.head,
+                         expect_count=args.count)
     except Fail as fail:
         print(_c(f"  RED - {fail.code}", "1;31", color))
         print(f"    {fail.detail}")
@@ -355,8 +380,9 @@ def main(argv=None):
         seals = ", ".join(str(s) for s in summary["seals"])
         print(f"  {summary['count']} records - ML-DSA-65 - ratchet OK - sealed at [{seals}]")
         print(f"  episode  {summary['episode']}")
-        print(f"  anchor   {summary['anchor'][:32]}...")
-        print(f"  head     {summary['head_hash'][:32]}...")
+        seen = "  [matches witness]"
+        print(f"  anchor   {summary['anchor'][:32]}...{seen if args.anchor else ''}")
+        print(f"  head     {summary['head_hash'][:32]}...{seen if args.head or args.count else ''}")
     print(_c("  GREEN - chain intact", "1;32", color))
     return 0
 

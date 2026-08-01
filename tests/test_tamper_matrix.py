@@ -175,6 +175,58 @@ def test_reopened_episode_is_green(tmp_path):
     assert summary["types"][-1] == "SEAL"
 
 
+# --- the residual gap, stated as a test rather than discovered on stage -----
+
+def test_truncating_back_to_an_earlier_seal_verifies_and_that_is_the_known_limit(tmp_path):
+    """Chopping the whole investigation leaves a chain that is internally perfect.
+
+    Intra-file sealing cannot catch this: the earlier SEAL's count matches the
+    files that remain. Only a witness held outside the operator's reach can.
+    """
+    root = build_investigated_episode(tmp_path)
+    full = verify_episode.verify(root)
+    first_seal = full["seals"][0]
+    adv.truncate_tail(root, first_seal + 1)
+
+    shortened = verify_episode.verify(root)
+    assert shortened["count"] == first_seal + 1
+    assert shortened["seals"] == [first_seal]
+
+    with pytest.raises(verify_episode.Fail) as exc:
+        verify_episode.verify(root, expect_count=full["count"])
+    assert exc.value.code == reasons.TRUNCATED_TAIL
+
+    with pytest.raises(verify_episode.Fail) as exc:
+        verify_episode.verify(root, expect_head=full["head_hash"])
+    assert exc.value.code == reasons.TRUNCATED_TAIL
+
+
+def test_a_wholly_substituted_chain_needs_a_published_anchor_to_catch(tmp_path):
+    """anchor.pub lives in the directory the operator controls.
+
+    Regenerating the episode from a fresh seed and rewriting anchor.pub produces a
+    chain that verifies against itself. It does not verify against the anchor the
+    episode was published under.
+    """
+    original = str(tmp_path / "original")
+    build_episode(original)
+    published = verify_episode.verify(original)["anchor"]
+
+    substituted = str(tmp_path / "substituted")
+    build_episode(substituted, seed0=bytes([7] * 32))
+    verify_episode.verify(substituted)
+
+    with pytest.raises(verify_episode.Fail) as exc:
+        verify_episode.verify(substituted, expect_anchor=published)
+    assert exc.value.code == reasons.ANCHOR_MISMATCH
+
+
+def test_a_matching_witness_stays_green(episode):
+    summary = verify_episode.verify(episode)
+    verify_episode.verify(episode, expect_anchor=summary["anchor"],
+                          expect_head=summary["head_hash"], expect_count=summary["count"])
+
+
 def test_every_reason_code_has_a_row():
     """Guard against a reason code that exists in the taxonomy but is never tested."""
     source = open(os.path.join(os.path.dirname(__file__), "test_tamper_matrix.py")).read()

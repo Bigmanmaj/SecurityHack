@@ -29,9 +29,10 @@ golden:
 	rm -rf episodes/golden
 	$(PY) -m agent.rag --scenario poisoned --out episodes/golden
 	$(PY) -m investigator.cli episodes/golden
-	$(PY) verify_episode.py episodes/golden
 	rm -f episodes/golden/.recorder-state.json
-	@echo "golden episode rebuilt (recorder state dropped: it is now append-closed)"
+	$(PY) demo/publish_witness.py episodes/golden > episodes/golden.witness
+	$(PY) verify_episode.py episodes/golden
+	@echo "golden episode rebuilt; update episodes/golden.witness header by hand if the prose moved"
 
 clean:
 	rm -rf $(EPISODE) .pytest_cache **/__pycache__

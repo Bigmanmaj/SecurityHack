@@ -10,6 +10,11 @@ def hash_hex(data):
     return hashlib.sha3_256(data).hexdigest()
 
 
+def hash_raw(data):
+    """Return H(data) as the raw 32-byte digest, for concatenating in the Merkle tree."""
+    return hashlib.sha3_256(data).digest()
+
+
 def hash_payload(payload):
     """Return H(canonical_bytes(payload)) as lowercase hex."""
     return hash_hex(canonical_bytes(payload))

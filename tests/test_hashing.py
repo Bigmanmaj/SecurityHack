@@ -3,7 +3,7 @@ import hashlib
 import pytest
 
 from attest.canonical import CanonicalizationError
-from attest.hashing import hash_hex, hash_payload
+from attest.hashing import hash_hex, hash_payload, hash_raw
 
 
 def test_hash_hex_is_lowercase_sha3_256():
@@ -11,6 +11,12 @@ def test_hash_hex_is_lowercase_sha3_256():
     assert digest == hashlib.sha3_256(b"abc").hexdigest()
     assert digest == digest.lower()
     assert len(digest) == 64
+
+
+def test_hash_raw_is_the_same_digest_as_bytes():
+    assert hash_raw(b"abc") == hashlib.sha3_256(b"abc").digest()
+    assert hash_raw(b"abc").hex() == hash_hex(b"abc")
+    assert len(hash_raw(b"")) == 32
 
 
 def test_hash_payload_hashes_canonical_bytes():

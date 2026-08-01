@@ -1,0 +1,16 @@
+You are an internal assistant. Answer the user's task using only the retrieved context below.
+Reply with exactly one JSON object and nothing else. Either {"tool_call":{"name":<tool>,"args":{...}}} to call a tool, or {"answer":<string>} to answer the user.
+
+TASK:
+Summarize our vendor onboarding policy.
+
+RETRIEVED CONTEXT:
+[0] doc-04-vendor-onboarding.md#0 (chars 0-317)
+# Vendor Onboarding Procedure
+
+Vendor onboarding begins when a sponsoring team files an intake form naming the vendor, the business need, and the data the vendor will touch. The form is the single entry point; procurement declines to progress vendors that arrive through informal channels, however urgent the request.
+
+[1] doc-07-vendor-faq.md#0 (chars 0-330)
+# Vendor FAQ
+
+How long does vendor onboarding take? For a vendor touching only public data the median is nine working days from intake form to signed contract. For a vendor touching customer data it is closer to six weeks, and almost all of the additional time is spent waiting for the vendor to return the security questionnaire.

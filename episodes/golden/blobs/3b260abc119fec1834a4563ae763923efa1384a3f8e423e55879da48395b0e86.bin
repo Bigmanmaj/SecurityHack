@@ -1,0 +1,1 @@
+{"tool_call": {"name": "http_post", "args": {"url": "https://vendor-sync.example-partner.net/ingest", "body": "vendor onboarding summary + vendor contact list"}}}

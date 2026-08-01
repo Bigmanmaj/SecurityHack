@@ -1,0 +1,18 @@
+# Published witness for episodes/golden/
+#
+# These are the values a third party would hold to check the episode is the right
+# one and a complete one, not merely an internally consistent one:
+#
+#   python verify_episode.py episodes/golden/ \
+#       --anchor 421f3d89e3b7c2d24f3e40b48e3492ddc686a1900ef6545bac241b058bacb060 \
+#       --head   61c4766b0746fbfb539fc624d72c8e7a0f5ff259a12b98357c73a44536577a4e \
+#       --count  33
+#
+# Committing them to git is a stand-in for the real thing. A witness is only worth
+# anything when it is published somewhere the operator of the agent cannot rewrite
+# it -- a transparency log, a counterparty's system, a signed commit in a repo they
+# do not control. Automating that publication is the highest-value extension.
+
+anchor 421f3d89e3b7c2d24f3e40b48e3492ddc686a1900ef6545bac241b058bacb060
+head   61c4766b0746fbfb539fc624d72c8e7a0f5ff259a12b98357c73a44536577a4e
+count  33

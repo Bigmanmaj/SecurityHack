@@ -1,0 +1,16 @@
+{
+  "content": [
+    {
+      "id": "toolu_offline_lookup_account",
+      "input": {
+        "workspace_id": "NB-000123"
+      },
+      "name": "lookup_account",
+      "type": "tool_use"
+    }
+  ],
+  "model": "claude-sonnet-4-5-20250929",
+  "role": "assistant",
+  "stop_reason": "tool_use",
+  "type": "message"
+}

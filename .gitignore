@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# scratch output of record_episode.py; the committed demo bundles are
+# episode_demo/ and episode_demo_done/
+episode/
+
+# .cache/ and trust/ ARE committed: the warm cache is what lets the demo run
+# with no API key, and trust/ holds the public keys for the demo bundles.

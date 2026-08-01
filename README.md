@@ -50,7 +50,7 @@ verifies, and closing that gap needs a TEE or an HSM.
 pip install -r requirements.txt
 
 bash scripts/demo.sh                     # the whole story, no API key needed
-pytest -q                                # 141 tests, all offline
+pytest -q                                # 142 tests, all offline
 ```
 
 Individually:
@@ -125,7 +125,20 @@ python verifier/verify_cli.py --episode episode_demo_done --trust trust --corpus
 #   verdict    ... culprit chunk d8eb2fce... = doc_07
 ```
 
-That second run is the strong claim: the verifier is not taking the operator's
+To read a bundle rather than check it, `inspect_cli.py` prints the timeline:
+
+```bash
+python verifier/inspect_cli.py --episode episode_demo_done --corpus data/corpus
+#     2  tool_call    recorder      transfer_funds  args 799b8ed7...  <-- VIOLATES POLICY
+#     5  attribution  investigator  single-chunk-ablation over 10 runs, culprit d8eb2fce... (= doc_07.md)
+#   This view is unverified. Run verify_cli.py for the verdict.
+```
+
+It recomputes nothing, checks no signature, and never says GREEN or RED. The
+two tools are kept apart on purpose: a readable summary is exactly the kind of
+thing an audience mistakes for a check.
+
+That corpus-resolving run is the strong claim: the verifier is not taking the operator's
 word for what the agent read, it is matching the corpus it holds against
 hashes signed at capture time. Edit a document afterwards and it says so —
 `9 resolved, and 1 not in this corpus` — while the bundle itself stays GREEN,
@@ -220,6 +233,7 @@ src/flightrec/investigator.py  judge + single-chunk ablation + signed verdict
 verifier/canonical.py          independent reimplementation of SPEC 1, 2, 4
 verifier/verify.py             independent reimplementation of SPEC 5
 verifier/verify_cli.py         GREEN / RED
+verifier/inspect_cli.py        read-only timeline; checks nothing, judges nothing
 scripts/record_episode.py      produce a bundle
 scripts/investigate.py         attribute and sign
 scripts/inject.py              write a poisoned corpus copy with your own text

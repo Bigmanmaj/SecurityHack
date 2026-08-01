@@ -47,6 +47,10 @@ of the spec and imports neither side.
 - **Replays must not pollute the bundle.** Use `NullRecorder` for ablation
   runs; the only thing an investigation writes to the real bundle is the
   attribution record and the new anchor.
+- **Only `verify_cli.py` reports a verdict.** `inspect_cli.py` reads a bundle
+  and validates nothing; it must never recompute a hash, check a signature, or
+  print GREEN or RED, and it always exits 0. Anything that reads like a check
+  but is not one is worse than no tool at all.
 - **Private keys stay in memory.** Only `trust/<key_id>.pub.hex` is written.
   `--demo-keys` derives keys from fixed public seeds so the committed demo
   bundle is byte-reproducible; it is never for real evidence.
@@ -61,6 +65,7 @@ pip install -r requirements.txt
 python scripts/record_episode.py --force   # writes episode/ and trust/
 python scripts/investigate.py              # appends the attribution, anchor-2
 python verifier/verify_cli.py --episode episode --trust trust
+python verifier/inspect_cli.py --episode episode --corpus data/corpus
 python scripts/tamper.py flip --episode episode --out /tmp/tampered
 bash scripts/demo.sh                       # the three-beat demo, no API key
 pytest -q

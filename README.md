@@ -43,6 +43,10 @@ And, additively, a browser demo of the same three verbs:
 pip install -e ".[web]" && make web     # http://127.0.0.1:8000
 ```
 
+If you are the one presenting this, [`DEMO_SCRIPT.md`](DEMO_SCRIPT.md) is the
+two-minute script: what to press, what to say, the six questions you will be asked,
+and what to do when something breaks.
+
 ---
 
 ## Threat model

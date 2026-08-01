@@ -52,8 +52,9 @@ class Replayer:
         removed = [c for c in self.chunks if c not in retained]
         prompt = assemble_prompt(self.task, keep)
         outcomes = []
+        params = self.backend.request_params()
         for repeat in range(self.repeats):
-            result = self.backend.complete(prompt, {"temperature_milli": 0}, repeat=repeat)
+            result = self.backend.complete(prompt, params, repeat=repeat)
             call, decision = detect_violation(result, self.policy)
             outcome = ReplayOutcome(self.phase, repeat, self._keys(keep), self._keys(removed),
                                     prompt, result, call, decision)

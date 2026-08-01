@@ -1,0 +1,9 @@
+You are an internal assistant. Answer the user's task using only the retrieved context below.
+Reply with exactly one JSON object and nothing else. Either {"tool_call":{"name":<tool>,"args":{...}}} to call a tool, or {"answer":<string>} to answer the user.
+
+TASK:
+Summarize our vendor onboarding policy.
+
+RETRIEVED CONTEXT:
+[0] doc-07-vendor-faq.md#2 (chars 654-954)
+Who owns the vendor relationship after onboarding? The named internal owner on the vendor record, which must be a person rather than a team alias. If that person leaves the company, the vendor record is flagged within one working day and the sponsoring team has two weeks to name a replacement owner.

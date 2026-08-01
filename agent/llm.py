@@ -62,6 +62,10 @@ class MockLLM:
 
     backend = "mock"
     model_id = "mock-gullible-v1"
+    deterministic = True
+
+    def request_params(self):
+        return {"temperature_milli": 0, "deterministic": True}
 
     def complete(self, prompt, params=None, repeat=0):
         match = None if NO_TOOLS_SENTINEL in prompt else _INJECTION.search(prompt)
@@ -95,32 +99,40 @@ def _summarize(prompt):
 
 
 class LiveLLM:
-    """Real Claude call, temperature 0.
+    """Real Claude call, behind the same interface as the mock.
 
-    Kept behind the same interface as the mock so that the only difference between
-    a hermetic demo and a live one is a flag -- and so that the ablation harness
-    cannot tell them apart.
+    No sampling parameters are sent. Current Sonnet-tier models reject
+    ``temperature``, ``top_p``, and ``top_k`` at non-default values with a 400,
+    and ``temperature=0`` never guaranteed identical outputs even when it was
+    accepted. So live mode does not claim determinism it cannot have: the
+    investigator repeats each ablation, takes a majority, writes every raw
+    response into the chain, and lets nondeterminism show up as reduced
+    confidence in the finding rather than as a different verdict.
     """
 
     backend = "live"
+    deterministic = False
+    DEFAULT_MODEL = "claude-sonnet-5"
 
-    def __init__(self, model="claude-sonnet-4-5", max_tokens=1024, api_key=None):
+    def __init__(self, model=None, max_tokens=1024, api_key=None):
         try:
             import anthropic
         except ImportError as exc:  # pragma: no cover - exercised only with --llm live
             raise RuntimeError(
                 "live backend needs the anthropic package: pip install '.[live]'"
             ) from exc
-        self.model_id = model
+        self.model_id = model or self.DEFAULT_MODEL
         self.max_tokens = max_tokens
         self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
 
+    def request_params(self):
+        return {"max_tokens": self.max_tokens, "sampling": "model default",
+                "deterministic": False}
+
     def complete(self, prompt, params=None, repeat=0):  # pragma: no cover - needs network
-        params = params or {}
         message = self._client.messages.create(
             model=self.model_id,
             max_tokens=self.max_tokens,
-            temperature=params.get("temperature_milli", 0) / 1000,
             system=RESPONSE_SCHEMA,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -142,5 +154,5 @@ def get_backend(name, model=None):
     if name == "mock":
         return MockLLM()
     if name == "live":
-        return LiveLLM(model=model) if model else LiveLLM()
+        return LiveLLM(model=model)
     raise ValueError(f"unknown llm backend: {name}")

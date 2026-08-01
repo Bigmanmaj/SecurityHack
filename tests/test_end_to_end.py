@@ -181,6 +181,19 @@ def test_one_character_turns_the_episode_red(tmp_path):
     assert "records/" in after.stdout, "a RED must name the file it found the problem in"
 
 
+def test_the_committed_golden_episode_still_verifies():
+    """Demo insurance: a pre-verified episode that needs no recording step."""
+    golden = os.path.join(REPO, "episodes", "golden")
+    summary = verify_episode.verify(golden)
+    assert len(summary["seals"]) == 2
+    finding = [b for b in summary["bodies"] if b["type"] == "ATTRIBUTION_FINDING"][0]["payload"]
+    assert finding["verdict"] == attribute.CAUSAL_SINGLE_SOURCE
+    assert (finding["culprit"]["doc_id"], finding["culprit"]["chunk_id"]) == CULPRIT
+    assert not os.path.exists(os.path.join(golden, ".recorder-state.json")), (
+        "the golden episode ships without its ratchet seed: it is append-closed"
+    )
+
+
 def test_the_cli_surface_is_three_verbs(tmp_path):
     root = str(tmp_path / "cli")
     record = subprocess.run([sys.executable, "-m", "agent.rag", "--scenario", "poisoned",

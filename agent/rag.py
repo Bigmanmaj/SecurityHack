@@ -88,7 +88,7 @@ class RecordingAgent:
         self.llm = backend
         self.policy = policy
         self.toolbox = tools_mod.Toolbox(corpus)
-        self.params = params or {"temperature_milli": 0, "max_tokens": 1024}
+        self.params = params or backend.request_params()
 
     def _llm_turn(self, prompt, purpose):
         blob = self.rec.put_blob(prompt)
@@ -198,7 +198,7 @@ def run_episode(out, scenario="poisoned", backend_name="mock", task=DEFAULT_TASK
         internal_hosts=tools_mod.INTERNAL_HOSTS,
         internal_email_domains=tools_mod.INTERNAL_EMAIL_DOMAINS,
     )
-    params = {"temperature_milli": 0, "max_tokens": 1024}
+    params = backend.request_params()
 
     rec = Recorder.open_new(out, actor=AGENT_VERSION, seed=seed)
     payload = genesis_payload(

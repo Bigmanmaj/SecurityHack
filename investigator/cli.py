@@ -6,7 +6,6 @@ embodies it rather than documenting it.
 """
 
 import argparse
-import os
 import sys
 
 import verify_episode
@@ -92,7 +91,7 @@ def investigate(root, backend_name="mock", repeats=None, exhaustive=False, model
     chunks = resolve_chunks(corpus, retrieval)
 
     backend = llm_mod.get_backend(backend_name, model=model)
-    deterministic = backend.backend == "mock"
+    deterministic = backend.deterministic
     repeats = repeats if repeats is not None else (1 if deterministic else 3)
     policy = PolicyEngine(
         genesis["payload"]["policy"]["allowlist"],

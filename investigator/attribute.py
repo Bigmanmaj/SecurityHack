@@ -16,8 +16,9 @@ SUFFICIENT_NOT_NECESSARY = "SUFFICIENT_NOT_NECESSARY"
 MULTIPLE_OR_DISTRIBUTED_CAUSE = "MULTIPLE_OR_DISTRIBUTED_CAUSE"
 NO_CAUSE_FOUND = "NO_CAUSE_FOUND"
 
-# Majority of three is the weakest evidence we will call a cause.
-THRESHOLD_MILLI = 667
+# A strict majority of replays, the same rule the bisection votes on: two of
+# three is 666 in integer milli-units, so the bar sits just above one half.
+THRESHOLD_MILLI = 501
 
 HIGH, MEDIUM, LOW = "HIGH", "MEDIUM", "LOW"
 

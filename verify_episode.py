@@ -22,17 +22,18 @@ import sys
 from dilithium_py.ml_dsa import ML_DSA_65
 
 ZERO = "0" * 64
+INT64 = (-(2**63), 2**63 - 1)
+PK_LEN, SIG_LEN = 1952, 3309
 BODY_FIELDS = {"v", "episode", "seq", "ts_ns", "prev", "next_pk", "type", "actor", "payload"}
 TYPES = {
     "GENESIS", "USER_INPUT", "RETRIEVAL", "LLM_CALL", "LLM_RESPONSE", "TOOL_CALL",
     "TOOL_RESULT", "POLICY_VIOLATION", "AGENT_FINAL", "INVESTIGATION_OPEN",
     "REPLAY_RUN", "ATTRIBUTION_FINDING", "ANCHOR", "SEAL",
 }
-INT64 = (-(2**63), 2**63 - 1)
 
 
 class Fail(Exception):
-    """A named verification failure, located and with the conflicting values."""
+    """A named verification failure: reason code, location, conflicting values."""
 
     def __init__(self, code, detail, seq=None, path=None, expected=None, got=None):
         super().__init__(code)
@@ -44,20 +45,23 @@ def sha3(data):
     return hashlib.sha3_256(data).hexdigest()
 
 
-# --- canonical JSON -------------------------------------------------------
-# Keys sorted by code point, separators "," and ":", UTF-8, integers only.
+def hex64(value):
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+# --- canonical JSON: keys sorted by code point, "," and ":", UTF-8, integers only
 
 def _pairs(pairs):
     out = {}
-    for k, v in pairs:
-        if k in out:
-            raise Fail("SCHEMA_INVALID", f"duplicate object key {k!r}")
-        out[k] = v
+    for key, value in pairs:
+        if key in out:
+            raise Fail("SCHEMA_INVALID", f"duplicate object key {key!r}")
+        out[key] = value
     return out
 
 
 def _no_float(text):
-    raise Fail("SCHEMA_INVALID", f"float literal {text!r} (floats are banned)")
+    raise Fail("SCHEMA_INVALID", f"float or JSON constant {text!r} is banned")
 
 
 def parse(text):
@@ -68,32 +72,14 @@ def parse(text):
         raise Fail("SCHEMA_INVALID", f"not valid JSON: {exc}") from exc
 
 
-def check_values(value, path="$"):
-    if value is None or isinstance(value, (bool, str)):
-        return
-    if isinstance(value, int):
-        if not INT64[0] <= value <= INT64[1]:
-            raise Fail("SCHEMA_INVALID", f"{path}: integer out of int64 range")
-        return
-    if isinstance(value, float):
-        raise Fail("SCHEMA_INVALID", f"{path}: float present")
-    if isinstance(value, list):
-        for i, item in enumerate(value):
-            check_values(item, f"{path}[{i}]")
-        return
-    if isinstance(value, dict):
-        for k, item in value.items():
-            check_values(item, f"{path}.{k}")
-        return
-    raise Fail("SCHEMA_INVALID", f"{path}: unsupported type {type(value).__name__}")
-
-
 def canonical(value):
     text = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
                       allow_nan=False)
     try:
         return text.encode("utf-8")
     except UnicodeEncodeError as exc:
+        # A lone surrogate parses but has no UTF-8 encoding, so no two
+        # implementations could ever agree on the bytes to sign.
         raise Fail("CANON_UNSTABLE", f"body is not encodable as UTF-8: {exc}") from exc
 
 
@@ -104,19 +90,33 @@ def canonical_stable(body):
     return once
 
 
-# --- per-record checks ----------------------------------------------------
+def check_values(value, path="$"):
+    if isinstance(value, float):
+        raise Fail("SCHEMA_INVALID", f"{path}: float present")
+    if value is None or isinstance(value, (bool, str)):
+        return
+    if isinstance(value, int):
+        if not INT64[0] <= value <= INT64[1]:
+            raise Fail("SCHEMA_INVALID", f"{path}: integer out of int64 range")
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            check_values(item, f"{path}[{i}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            check_values(item, f"{path}.{key}")
+    else:
+        raise Fail("SCHEMA_INVALID", f"{path}: unsupported type {type(value).__name__}")
 
-def hex64(value):
-    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
+# --- per-record checks
 
 def check_schema(body):
-    if not isinstance(body, dict) or set(body) != BODY_FIELDS:
-        missing = sorted(BODY_FIELDS - set(body or {}))
-        extra = sorted(set(body or {}) - BODY_FIELDS)
-        raise Fail("SCHEMA_INVALID", f"body fields missing={missing} unknown={extra}")
+    got = set(body) if isinstance(body, dict) else set()
+    if got != BODY_FIELDS:
+        raise Fail("SCHEMA_INVALID", f"body fields missing={sorted(BODY_FIELDS - got)} "
+                                     f"unknown={sorted(got - BODY_FIELDS)}")
     if body["v"] != 1:
-        raise Fail("SCHEMA_INVALID", f"unsupported version {body['v']!r}")
+        raise Fail("SCHEMA_INVALID", f"unsupported record version {body['v']!r}")
     if body["type"] not in TYPES:
         raise Fail("SCHEMA_INVALID", f"unknown record type {body['type']!r}")
     for field in ("seq", "ts_ns"):
@@ -125,10 +125,9 @@ def check_schema(body):
     for field in ("prev", "next_pk"):
         if not hex64(body[field]):
             raise Fail("SCHEMA_INVALID", f"{field} must be 64 lowercase hex characters")
-    if not isinstance(body["episode"], str) or not body["episode"]:
-        raise Fail("SCHEMA_INVALID", "episode must be a non-empty string")
-    if not isinstance(body["actor"], str) or not body["actor"]:
-        raise Fail("SCHEMA_INVALID", "actor must be a non-empty string")
+    for field in ("episode", "actor"):
+        if not isinstance(body[field], str) or not body[field]:
+            raise Fail("SCHEMA_INVALID", f"{field} must be a non-empty string")
     if not isinstance(body["payload"], dict):
         raise Fail("SCHEMA_INVALID", "payload must be an object")
     if (body["seq"] == 0) != (body["type"] == "GENESIS"):
@@ -144,61 +143,78 @@ def check_sig_block(sig):
     if sig["alg"] != "ML-DSA-65":
         raise Fail("SCHEMA_INVALID", f"unsupported signature algorithm {sig['alg']!r}")
     try:
-        pk, value = base64.b64decode(sig["pk"], validate=True), base64.b64decode(sig["value"], validate=True)
+        pk = base64.b64decode(sig["pk"], validate=True)
+        value = base64.b64decode(sig["value"], validate=True)
     except Exception as exc:
         raise Fail("SCHEMA_INVALID", f"sig is not valid base64: {exc}") from exc
-    if len(pk) != 1952 or len(value) != 3309:
+    if (len(pk), len(value)) != (PK_LEN, SIG_LEN):
         raise Fail("SCHEMA_INVALID", f"ML-DSA-65 sizes wrong: pk={len(pk)} sig={len(value)}")
     return pk, value
 
 
-def check_blobs(body, root, seq, path):
-    stack = [body["payload"]]
+def check_blobs(payload, root):
+    """Large payloads live out of line, referenced by hash. Re-hash every one."""
+    stack = [payload]
     while stack:
         node = stack.pop()
-        if isinstance(node, dict):
-            stack.extend(node.values())
-            digest = node.get("blob_sha3")
-            if not isinstance(digest, str):
-                continue
-            if not hex64(digest):
-                raise Fail("SCHEMA_INVALID", "blob_sha3 must be 64 lowercase hex characters", seq, path)
-            blob = os.path.join(root, "blobs", digest + ".bin")
-            if not os.path.exists(blob):
-                raise Fail("BLOB_HASH_MISMATCH", f"referenced blob is missing: blobs/{digest}.bin",
-                           seq, path, expected=digest, got="<absent>")
-            with open(blob, "rb") as fh:
-                data = fh.read()
-            actual = sha3(data)
-            if actual != digest:
-                raise Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin content was swapped",
-                           seq, path, expected=digest, got=actual)
-            if "blob_len" in node and node["blob_len"] != len(data):
-                raise Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin length changed", seq, path,
-                           expected=node["blob_len"], got=len(data))
-        elif isinstance(node, list):
+        if isinstance(node, list):
             stack.extend(node)
+            continue
+        if not isinstance(node, dict):
+            continue
+        stack.extend(node.values())
+        digest = node.get("blob_sha3")
+        if not isinstance(digest, str):
+            continue
+        if not hex64(digest):
+            raise Fail("SCHEMA_INVALID", "blob_sha3 must be 64 lowercase hex characters")
+        path = os.path.join(root, "blobs", digest + ".bin")
+        if not os.path.exists(path):
+            raise Fail("BLOB_HASH_MISMATCH", f"referenced blob is missing: blobs/{digest}.bin",
+                       expected=digest, got="<absent>")
+        with open(path, "rb") as fh:
+            data = fh.read()
+        if sha3(data) != digest:
+            raise Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin content was swapped",
+                       expected=digest, got=sha3(data))
+        if "blob_len" in node and node["blob_len"] != len(data):
+            raise Fail("BLOB_HASH_MISMATCH", f"blobs/{digest}.bin length changed",
+                       expected=node["blob_len"], got=len(data))
 
 
-# --- the walk -------------------------------------------------------------
+def committed_hash(records_dir, files, index):
+    """What the *next* record says this body hashed to, if it is readable."""
+    if index + 1 >= len(files):
+        return None
+    try:
+        with open(os.path.join(records_dir, files[index + 1]), "r", encoding="utf-8") as fh:
+            return json.load(fh)["body"]["prev"] + "  per the next record"
+    except Exception:
+        return None
+
+
+# --- the walk
 
 def verify(root):
     """Return a summary dict, or raise Fail with a named reason code."""
     anchor_path = os.path.join(root, "anchor.pub")
     if not os.path.isfile(anchor_path):
-        raise Fail("ANCHOR_MISMATCH", "anchor.pub is missing: there is no trust input", path=anchor_path)
+        raise Fail("ANCHOR_MISMATCH", "anchor.pub is missing: there is no trust input",
+                   path=anchor_path)
     with open(anchor_path, "r", encoding="ascii") as fh:
         anchor = fh.read().strip()
     if not hex64(anchor):
-        raise Fail("ANCHOR_MISMATCH", "anchor.pub is not 64 lowercase hex characters", path=anchor_path)
+        raise Fail("ANCHOR_MISMATCH", "anchor.pub is not 64 lowercase hex characters",
+                   path=anchor_path)
 
     records_dir = os.path.join(root, "records")
-    files = sorted(f for f in os.listdir(records_dir) if f.endswith(".json")) if os.path.isdir(records_dir) else []
+    files = sorted(f for f in os.listdir(records_dir)
+                   if f.endswith(".json")) if os.path.isdir(records_dir) else []
     if not files:
         raise Fail("TRUNCATED_TAIL", "no records found", path=records_dir)
 
-    expect_pk_hash, prev_hash, episode, last_ts, seen = anchor, ZERO, None, -1, {}
-    bodies, pending_seal = [], None
+    expect_pk_hash, prev_hash, episode, last_ts = anchor, ZERO, None, -1
+    seen, bodies, pending_seal = {}, [], None
 
     for index, name in enumerate(files):
         path = os.path.join(records_dir, name)
@@ -215,7 +231,7 @@ def verify(root):
             seq = body["seq"]
 
             if seq in seen:
-                raise Fail("DUPLICATE_SEQ", f"seq {seq} already claimed by {seen[seq]}",
+                raise Fail("DUPLICATE_SEQ", f"seq {seq} was already claimed by {seen[seq]}",
                            expected=index, got=seq)
             if seq != index:
                 raise Fail("SEQUENCE_GAP", f"expected seq {index} at position {index}",
@@ -229,39 +245,44 @@ def verify(root):
                 raise Fail("TIMESTAMP_REGRESSION", "ts_ns did not advance",
                            expected=f">{last_ts}", got=body["ts_ns"])
 
-            pk_hash = sha3(pk)
-            if pk_hash != expect_pk_hash:
-                code = "ANCHOR_MISMATCH" if index == 0 else "RATCHET_MISMATCH"
-                raise Fail(code, "signing key is not the one committed by the previous record"
-                           if index else "record 0's public key does not match anchor.pub",
-                           expected=expect_pk_hash, got=pk_hash)
+            if sha3(pk) != expect_pk_hash:
+                raise Fail(
+                    "ANCHOR_MISMATCH" if index == 0 else "RATCHET_MISMATCH",
+                    "record 0's public key does not match anchor.pub" if index == 0 else
+                    "signing key is not the one committed by the previous record",
+                    expected=expect_pk_hash, got=sha3(pk))
             if not ML_DSA_65.verify(pk, message, signature):
+                # The next record's `prev` is a signed commitment to what this
+                # body was supposed to hash to, which makes the edit legible.
                 raise Fail("SIGNATURE_INVALID", "signature does not cover these body bytes",
-                           expected=sha3(message)[:16] + "... (hash of signed bytes)",
-                           got="signature verifies over different bytes")
+                           expected=committed_hash(records_dir, files, index)
+                           or "the body these bytes were signed over",
+                           got=sha3(message) + "  as it is now")
             if body["prev"] != prev_hash:
                 raise Fail("CHAIN_BREAK", "prev does not name the preceding record",
                            expected=prev_hash, got=body["prev"])
 
-            check_blobs(body, root, seq, path)
+            check_blobs(body["payload"], root)
 
+            # An intermediate SEAL is legal only when an INVESTIGATION_OPEN naming
+            # that sealed head follows it immediately. One chain, one ratchet.
             if pending_seal is not None:
                 if body["type"] != "INVESTIGATION_OPEN":
                     raise Fail("SEAL_MISPLACED",
-                               f"SEAL at seq {pending_seal['seq']} is followed by {body['type']}, "
-                               "not INVESTIGATION_OPEN",
+                               f"SEAL at seq {pending_seal['seq']} is followed by "
+                               f"{body['type']}, not INVESTIGATION_OPEN",
                                expected="INVESTIGATION_OPEN", got=body["type"])
                 if body["payload"].get("parent_head") != pending_seal["payload"]["head_hash"]:
-                    raise Fail("SEAL_MISPLACED", "INVESTIGATION_OPEN does not name the sealed head",
+                    raise Fail("SEAL_MISPLACED",
+                               "INVESTIGATION_OPEN does not name the sealed head",
                                expected=pending_seal["payload"]["head_hash"],
                                got=body["payload"].get("parent_head"))
                 pending_seal = None
 
             if body["type"] == "SEAL":
                 seal = body["payload"]
-                for field in ("count", "head_hash", "reason"):
-                    if field not in seal:
-                        raise Fail("SCHEMA_INVALID", f"SEAL payload missing {field}")
+                if not all(field in seal for field in ("count", "head_hash", "reason")):
+                    raise Fail("SCHEMA_INVALID", "SEAL payload needs count, head_hash, reason")
                 if seal["count"] != seq + 1:
                     raise Fail("TRUNCATED_TAIL", "SEAL count disagrees with the records present",
                                expected=seq + 1, got=seal["count"])
@@ -274,46 +295,40 @@ def verify(root):
             expect_pk_hash, prev_hash, last_ts = body["next_pk"], sha3(message), body["ts_ns"]
             bodies.append(body)
         except Fail as fail:
-            # Locate every failure: reason code, seq, file path, conflicting values.
-            if fail.seq is None:
-                fail.seq = index
-            if fail.path is None:
-                fail.path = path
+            fail.seq = index if fail.seq is None else fail.seq
+            fail.path = path if fail.path is None else fail.path
             raise
-    return _finish(files, bodies, records_dir, episode, prev_hash, anchor)
 
-
-def _finish(files, bodies, records_dir, episode, head, anchor):
-    last = bodies[-1]
+    # Tail truncation is the classic hole: chop the last k records and the rest
+    # still verifies. The mandatory terminal SEAL and its count are the answer.
+    last, last_path = bodies[-1], os.path.join(records_dir, files[-1])
     if last["type"] != "SEAL":
         raise Fail("TRUNCATED_TAIL", "the final record is not a SEAL: the tail was chopped",
-                   seq=last["seq"], path=os.path.join(records_dir, files[-1]),
-                   expected="SEAL", got=last["type"])
+                   seq=last["seq"], path=last_path, expected="SEAL", got=last["type"])
     if last["payload"]["count"] != len(files):
         raise Fail("TRUNCATED_TAIL", "SEAL count disagrees with the number of record files",
-                   seq=last["seq"], path=os.path.join(records_dir, files[-1]),
+                   seq=last["seq"], path=last_path,
                    expected=last["payload"]["count"], got=len(files))
-    return {
-        "episode": episode,
-        "count": len(files),
-        "head_hash": head,
-        "anchor": anchor,
-        "seals": [b["seq"] for b in bodies if b["type"] == "SEAL"],
-        "types": [b["type"] for b in bodies],
-        "bodies": bodies,
-    }
+    return {"episode": episode, "count": len(files), "head_hash": prev_hash, "anchor": anchor,
+            "seals": [b["seq"] for b in bodies if b["type"] == "SEAL"],
+            "types": [b["type"] for b in bodies], "bodies": bodies}
 
 
-# --- CLI ------------------------------------------------------------------
+# --- CLI
 
-def _c(text, color, on):
-    return f"\033[{color}m{text}\033[0m" if on else text
+def _c(text, code, on):
+    return f"\033[{code}m{text}\033[0m" if on else text
+
+
+def _short(value):
+    text = str(value)
+    return text if len(text) <= 88 else text[:85] + "..."
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Verify a flight-recorder episode.")
     ap.add_argument("episode", help="path to the episode directory")
-    ap.add_argument("--dump", action="store_true", help="print seq/type/hash for every record")
+    ap.add_argument("--dump", action="store_true", help="print seq/type/prev for every record")
     ap.add_argument("--quiet", action="store_true", help="print only GREEN or the RED reason")
     ap.add_argument("--no-color", action="store_true")
     args = ap.parse_args(argv)
@@ -344,11 +359,6 @@ def main(argv=None):
         print(f"  head     {summary['head_hash'][:32]}...")
     print(_c("  GREEN - chain intact", "1;32", color))
     return 0
-
-
-def _short(value):
-    text = str(value)
-    return text if len(text) <= 72 else text[:69] + "..."
 
 
 if __name__ == "__main__":

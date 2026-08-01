@@ -200,6 +200,7 @@ def describe(episode_dir: str | Path) -> dict[str, Any]:
         "attribution": None,
         "model": None,
         "agent_id": None,
+        "chunk_hashes": [],
     }
 
     for path in sorted((episode / "records").glob("*.json")):
@@ -215,6 +216,8 @@ def describe(episode_dir: str | Path) -> dict[str, Any]:
             summary["model"] = payload.get("model")
             summary["agent_id"] = payload.get("agent_id")
             summary["forbidden_tools"] = list(payload.get("policy", {}).get("forbidden_tools", []))
+        elif record.get("type") == "retrieval":
+            summary["chunk_hashes"] = list(payload.get("chunk_hashes", []))
         elif record.get("type") == "tool_call":
             if payload.get("tool") in summary["forbidden_tools"]:
                 summary["violations"].append(
@@ -245,13 +248,30 @@ def describe(episode_dir: str | Path) -> dict[str, Any]:
     return summary
 
 
+def corpus_index(corpus_dir: str | Path) -> dict[str, str]:
+    """`chunk hash -> document name` for a corpus directory (SPEC §3.2)."""
+    return {
+        h_hex(canon_bytes(path.read_text(encoding="utf-8"))): path.stem
+        for path in sorted(Path(corpus_dir).glob("*.md"))
+    }
+
+
 def resolve_chunk_hash(corpus_dir: str | Path, chunk_hash: str) -> str | None:
     """Which document in `corpus_dir` hashes to `chunk_hash`, if any.
 
     A bundle names the culprit by hash only. Anyone holding the corpus can turn
     that back into a file name; nobody has to trust the investigator's label.
     """
-    for path in sorted(Path(corpus_dir).glob("*.md")):
-        if h_hex(canon_bytes(path.read_text(encoding="utf-8"))) == chunk_hash:
-            return path.stem
-    return None
+    return corpus_index(corpus_dir).get(chunk_hash)
+
+
+def resolve_context(corpus_dir: str | Path, chunk_hashes: list[str]) -> list[tuple[str, str | None]]:
+    """Name every document the agent had in its context, in context order.
+
+    The retrieval record commits to hashes, not text, so this is how a third
+    party establishes *what the agent read* rather than taking the operator's
+    word for it. An unresolved hash means the bundle saw something this corpus
+    does not contain.
+    """
+    index = corpus_index(corpus_dir)
+    return [(digest, index.get(digest)) for digest in chunk_hashes]

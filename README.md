@@ -50,7 +50,7 @@ verifies, and closing that gap needs a TEE or an HSM.
 pip install -r requirements.txt
 
 bash scripts/demo.sh                     # the whole story, no API key needed
-pytest -q                                # 136 tests, all offline
+pytest -q                                # 141 tests, all offline
 ```
 
 Individually:
@@ -99,6 +99,50 @@ hex digit in one payload. `HASH_MISMATCH`, `BAD_SIGNATURE`, RED, exit 1.
 gives `SEQ_GAP_OR_DUP` + `COUNT_MISMATCH` + `ROOT_MISMATCH`, and swapping two
 records' sequence numbers leaves **every signature valid** and is caught only
 by the root — which is precisely why signing each log line is not enough.
+
+## What a third party needs
+
+Two separate things, and it is worth keeping them apart.
+
+**The public keys alone** tell you whether the bundle is intact and who signed
+it. From `trust/*.pub.hex` and the bundle you learn: which agent, on which
+model, under which policy; that a forbidden `transfer_funds` call happened at
+seq 2 and was not executed; that ten chunks were in context; and that an
+investigator signed a verdict. Every hash recomputes and every signature holds,
+or you get a named reason and RED.
+
+**The originals** — the corpus, the query, the answer — are what turn hashes
+back into content. Records commit to hashes, never text, so the bundle is
+publishable without leaking customer data, and the trade is that reading it
+requires the material it commits to:
+
+```bash
+python verifier/verify_cli.py --episode episode_demo_done --trust trust
+#   context    10 chunks, hashes only (pass --corpus to name them)
+
+python verifier/verify_cli.py --episode episode_demo_done --trust trust --corpus data/corpus
+#   context    10 chunks: doc_00, doc_01, ..., doc_09
+#   verdict    ... culprit chunk d8eb2fce... = doc_07
+```
+
+That second run is the strong claim: the verifier is not taking the operator's
+word for what the agent read, it is matching the corpus it holds against
+hashes signed at capture time. Edit a document afterwards and it says so —
+`9 resolved, and 1 not in this corpus` — while the bundle itself stays GREEN,
+because the bundle was not the thing that changed.
+
+And verification is only worth as much as the keys you brought with you. Swap
+in a different public key and every record it signed fails:
+
+```
+BAD_SIGNATURE:00000.json
+...
+RED
+```
+
+So the keys have to reach you by some route the operator does not control —
+published, cross-signed, or handed over before the episode. `trust/` in this
+repo is a convenience for the demo, not a trust model.
 
 ## Write your own injection
 

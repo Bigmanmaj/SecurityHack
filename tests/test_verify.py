@@ -12,7 +12,7 @@ from pathlib import Path
 
 from dilithium_py.ml_dsa import ML_DSA_65
 
-from verifier.verify import verify_episode
+from verifier.verify import resolve_context, verify_episode
 
 from .bundles import BundleBuilder, MANIFEST_PAYLOAD, valid_bundle
 from .vectors import canon, h, signed_message
@@ -391,6 +391,66 @@ def test_cli_resolves_a_culprit_hash_against_a_corpus(tmp_path):
 
     assert result.returncode == 0
     assert "doc_07" in result.stdout
+
+
+def test_context_resolution_names_every_document_the_agent_read(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc_00.md").write_text("first document", encoding="utf-8")
+    (corpus / "doc_01.md").write_text("second document", encoding="utf-8")
+
+    resolved = resolve_context(
+        corpus, [h(canon("second document")), h(canon("first document"))]
+    )
+
+    assert [name for _, name in resolved] == ["doc_01", "doc_00"], "context order is preserved"
+
+
+def test_a_document_edited_after_the_fact_no_longer_resolves(tmp_path):
+    """The bundle stays intact; it is the corpus that stopped matching."""
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc_00.md").write_text("edited since the episode", encoding="utf-8")
+
+    resolved = resolve_context(corpus, [h(canon("what the agent actually read"))])
+
+    assert resolved == [(h(canon("what the agent actually read")), None)]
+
+
+def test_cli_names_the_context_only_when_given_a_corpus(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc_c.md").write_text("c", encoding="utf-8")
+    builder = valid_bundle(tmp_path)
+
+    without = run_cli(builder)
+    with_corpus = run_cli(builder, "--corpus", str(corpus))
+
+    assert "1 chunks, hashes only" in without.stdout
+    assert "1 chunks: doc_c" in with_corpus.stdout
+
+
+def test_cli_flags_context_a_corpus_cannot_account_for(tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "doc_other.md").write_text("something else entirely", encoding="utf-8")
+
+    result = run_cli(valid_bundle(tmp_path), "--corpus", str(corpus))
+
+    assert "1 not in this corpus" in result.stdout
+    assert result.returncode == 0, "an unmatched corpus is not a broken bundle"
+
+
+def test_substituting_a_public_key_fails_every_record_it_signed(tmp_path):
+    """Verification is only as meaningful as the keys you brought with you."""
+    builder = valid_bundle(tmp_path)
+    other_public, _ = ML_DSA_65.keygen()
+    (builder.trust / "recorder.pub.hex").write_text(other_public.hex() + "\n", encoding="utf-8")
+
+    reasons = reasons_for(builder)
+
+    assert tokens(reasons) == {"BAD_SIGNATURE"}
+    assert len(reasons) == 4
 
 
 def test_cli_reports_a_missing_episode_as_red(tmp_path):

@@ -16,7 +16,13 @@ from pathlib import Path
 if __package__ in (None, ""):  # allow running the file directly
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from verifier.verify import describe, load_trust, resolve_chunk_hash, verify_episode
+from verifier.verify import (
+    describe,
+    load_trust,
+    resolve_chunk_hash,
+    resolve_context,
+    verify_episode,
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -39,6 +45,17 @@ def print_summary(episode: str, trust: str, corpus: str | None) -> None:
     print(f"trust      {trust} ({len(keys)} keys: {', '.join(sorted(keys)) or 'none'})")
     print(f"agent      {summary['agent_id']} on {summary['model']}")
     print(f"records    {summary['records']} records: {', '.join(summary['types'])}")
+
+    if summary["chunk_hashes"]:
+        count = len(summary["chunk_hashes"])
+        if corpus:
+            resolved = resolve_context(corpus, summary["chunk_hashes"])
+            named = [name for _, name in resolved if name]
+            unknown = count - len(named)
+            detail = ", ".join(named) + (f", and {unknown} not in this corpus" if unknown else "")
+            print(f"context    {count} chunks: {detail}")
+        else:
+            print(f"context    {count} chunks, hashes only (pass --corpus to name them)")
 
     for anchor in summary["anchors"]:
         print(
